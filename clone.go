@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/md5"
-	enc "encoding/hex"
+	"encoding/hex"
 	"flag"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	"io"
@@ -17,14 +17,32 @@ import (
 	"time"
 )
 
-var count int
+type WOFClone struct {
+     Count int
+     Success int
+     Error int
+     Skipped int
+     Source string
+     Dest string
+}
 
-var source = flag.String("source", "http://whosonfirst.mapzen.com/data/", "Where to look for files")
-var dest = flag.String("dest", "", "Where to write files")
+func NewWOFClone(source string, dest string) *WOFClone {
 
-// PLEASE FOR TO MAKE ALL OF THIS IN TO A PROPER PACKAGE
+     // to do - add logging
 
-func ParseFile(file string) error {
+     c := WOFClone{
+       Count: 0,
+       Success: 0,
+       Error: 0,
+       Skipped: 0,
+       Source: source,
+       Dest: source,
+     }
+
+     return &c
+}
+
+func (c *WOFClone) ParseMetaFile(file string) error {
 
 	abs_path, _ := filepath.Abs(file)
 	reader, read_err := csv.NewDictReader(abs_path)
@@ -57,7 +75,7 @@ func ParseFile(file string) error {
 
 		go func() {
 			defer wg.Done()
-			FetchStore(rel_path)
+			c.FetchStore(rel_path)
 		}()
 	}
 
@@ -66,12 +84,12 @@ func ParseFile(file string) error {
 	return nil
 }
 
-func FetchStore(rel_path string) error {
+func (c *WOFClone) FetchStore(rel_path string) error {
 
-	count += 1
+	c.Count += 1
 
-	remote_abspath := *source + rel_path
-	local_abspath := path.Join(*dest, rel_path)
+	remote_abspath := c.Source + rel_path
+	local_abspath := path.Join(c.Dest, rel_path)
 
 	// has_changed := false
 
@@ -79,7 +97,7 @@ func FetchStore(rel_path string) error {
 
 	if !os.IsNotExist(err) {
 
-		change, _ := HasChanged(local_abspath, remote_abspath)
+		change, _ := c.HasChanged(local_abspath, remote_abspath)
 
 		if !change {
 			return nil
@@ -121,7 +139,7 @@ func FetchStore(rel_path string) error {
 	return nil
 }
 
-func HasChanged(local string, remote string) (bool, error) {
+func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
 
@@ -132,7 +150,7 @@ func HasChanged(local string, remote string) (bool, error) {
 	}
 
 	hash := md5.Sum(body)
-	local_hash := enc.EncodeToString(hash[:])
+	local_hash := hex.EncodeToString(hash[:])
 
 	rsp, err := http.Head(remote)
 
@@ -154,11 +172,15 @@ func HasChanged(local string, remote string) (bool, error) {
 
 func main() {
 
+     var source = flag.String("source", "http://whosonfirst.mapzen.com/data/", "Where to look for files")
+     var dest = flag.String("dest", "", "Where to write files")
+
 	flag.Parse()
 	args := flag.Args()
 
+	cl := NewWOFClone(*source, *dest)
+
 	start := time.Now()
-	count = 0
 
 	wg := new(sync.WaitGroup)
 
@@ -169,7 +191,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			log.Println(file)
-			ParseFile(file)
+			cl.ParseMetaFile(file)
 		}()
 	}
 
@@ -178,5 +200,5 @@ func main() {
 	since := time.Since(start)
 	secs := float64(since) / 1e9
 
-	log.Printf("processed %d files in %f seconds\n", count, secs)
+	log.Printf("processed %d files in %f seconds\n", cl.Count, secs)
 }
