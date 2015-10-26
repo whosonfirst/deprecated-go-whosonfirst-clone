@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -18,28 +19,43 @@ import (
 )
 
 type WOFClone struct {
-     Count int
-     Success int
-     Error int
-     Skipped int
-     Source string
-     Dest string
+	Count          int
+	Success        int
+	Error          int
+	Skipped        int
+	Source         string
+	Dest           string
+	Client         *http.Client
+	Connections    int
+	MaxConnections int
 }
 
 func NewWOFClone(source string, dest string) *WOFClone {
 
-     // to do - add logging
+	// to do - add logging
 
-     c := WOFClone{
-       Count: 0,
-       Success: 0,
-       Error: 0,
-       Skipped: 0,
-       Source: source,
-       Dest: source,
-     }
+	transport := &http.Transport{
+		Dial: (&net.Dialer{
+			Timeout:   0,
+			KeepAlive: 0,
+		}).Dial,
+	}
 
-     return &c
+	cl := &http.Client{Transport: transport}
+
+	c := WOFClone{
+		Count:          0,
+		Success:        0,
+		Error:          0,
+		Skipped:        0,
+		Source:         source,
+		Dest:           source,
+		Client:         cl,
+		Connections:    0,
+		MaxConnections: 200,
+	}
+
+	return &c
 }
 
 func (c *WOFClone) ParseMetaFile(file string) error {
@@ -91,8 +107,6 @@ func (c *WOFClone) FetchStore(rel_path string) error {
 	remote_abspath := c.Source + rel_path
 	local_abspath := path.Join(c.Dest, rel_path)
 
-	// has_changed := false
-
 	_, err := os.Stat(local_abspath)
 
 	if !os.IsNotExist(err) {
@@ -117,10 +131,10 @@ func (c *WOFClone) FetchStore(rel_path string) error {
 
 	log.Printf("fetch '%s' and store in %s\n", remote_abspath, local_abspath)
 
-	rsp, fetch_err := http.Get(remote_abspath)
+	rsp, fetch_err := c.Fetch("GET", remote_abspath)
 
 	if fetch_err != nil {
-		log.Fatal(fetch_err)
+		log.Println(fetch_err)
 		return fetch_err
 	}
 
@@ -152,7 +166,7 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 	hash := md5.Sum(body)
 	local_hash := hex.EncodeToString(hash[:])
 
-	rsp, err := http.Head(remote)
+	rsp, err := c.Fetch("HEAD", remote)
 
 	if err != nil {
 		return change, err
@@ -170,10 +184,21 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 	return change, nil
 }
 
+func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
+
+	req, _ := http.NewRequest(method, url, nil)
+	req.Close = true
+
+	rsp, err := c.Client.Do(req)
+	//	defer rsp.Body.Close()
+
+	return rsp, err
+}
+
 func main() {
 
-     var source = flag.String("source", "http://whosonfirst.mapzen.com/data/", "Where to look for files")
-     var dest = flag.String("dest", "", "Where to write files")
+	var source = flag.String("source", "http://whosonfirst.mapzen.com/data/", "Where to look for files")
+	var dest = flag.String("dest", "", "Where to write files")
 
 	flag.Parse()
 	args := flag.Args()
