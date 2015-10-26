@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/md5"
+	enc "encoding/hex"
 	"flag"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -74,20 +77,23 @@ func FetchStore(rel_path string) error {
 
 	_, err := os.Stat(local_abspath)
 
-	if ! os.IsNotExist(err) {
-	   // Check whether file has changed here	
+	if !os.IsNotExist(err) {
 
-	   log.Printf("%s already exists\n", local_abspath)
-	   return nil
+		change, _ := HasChanged(local_abspath, remote_abspath)
+
+		if !change {
+			return nil
+		}
+
 	} else {
 
-	  local_root := path.Dir(local_abspath)
+		local_root := path.Dir(local_abspath)
 
-	  _, err := os.Stat(local_root)
+		_, err := os.Stat(local_root)
 
-	  if os.IsNotExist(err) {
-		log.Printf("create %s\n", local_root)
-		os.MkdirAll(local_root, 0755)
+		if os.IsNotExist(err) {
+			log.Printf("create %s\n", local_root)
+			os.MkdirAll(local_root, 0755)
 		}
 	}
 
@@ -113,6 +119,37 @@ func FetchStore(rel_path string) error {
 	}
 
 	return nil
+}
+
+func HasChanged(local string, remote string) (bool, error) {
+
+	change := true
+
+	body, err := ioutil.ReadFile(local)
+
+	if err != nil {
+		return change, err
+	}
+
+	hash := md5.Sum(body)
+	local_hash := enc.EncodeToString(hash[:])
+
+	rsp, err := http.Head(remote)
+
+	if err != nil {
+		return change, err
+	}
+
+	etag := rsp.Header.Get("Etag")
+	remote_hash := strings.Replace(etag, "\"", "", -1)
+
+	if local_hash == remote_hash {
+		change = false
+	}
+
+	log.Printf("hash %s etag %s change %t\n", local_hash, remote_hash, change)
+
+	return change, nil
 }
 
 func main() {
