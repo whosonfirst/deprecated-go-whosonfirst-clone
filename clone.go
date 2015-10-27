@@ -6,6 +6,7 @@ import (
 	"flag"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
+	golog "log"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -109,7 +110,7 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 
 		for c.Completed < c.Scheduled {
 			c.logger.Info("scheduled: %d completed: %d connections: %d", c.Scheduled, c.Completed, c.connections)
-			time.Sleep(1 * time.Second)
+			time.Sleep(5 * time.Second)
 		}
 	}()
 
@@ -202,10 +203,15 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
 
+	c.Throttle()
+
 	body, err := ioutil.ReadFile(local)
+
+	atomic.AddInt64(&c.connections, -1)
 
 	if err != nil {
 		c.logger.Error("Failed to read %s, becase %v", local, err)
+		golog.Fatal(err)
 		return change, err
 	}
 
@@ -288,6 +294,26 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 
 	c.logger.Debug("%s %s", method, url)
 
+	c.Throttle()
+
+	req, _ := http.NewRequest(method, url, nil)
+	req.Close = true
+
+	rsp, err := c.client.Do(req)
+
+	atomic.AddInt64(&c.connections, -1)
+
+	if err != nil {
+		c.logger.Error("Failed to %s %s, because %v", method, url, err)
+		golog.Fatal(err)
+		return nil, err
+	}
+
+	return rsp, err
+}
+
+func (c *WOFClone) Throttle() {
+
 	for {
 		c.cond.L.Lock()
 
@@ -303,19 +329,6 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 		break
 	}
 
-	req, _ := http.NewRequest(method, url, nil)
-	req.Close = true
-
-	rsp, err := c.client.Do(req)
-
-	atomic.AddInt64(&c.connections, -1)
-
-	if err != nil {
-		c.logger.Error("Failed to %s %s, because %v", method, url, err)
-		return nil, err
-	}
-
-	return rsp, err
 }
 
 func main() {
