@@ -8,13 +8,13 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,26 +26,18 @@ type WOFClone struct {
 	Source         string
 	Dest           string
 	Client         *http.Client
-	Connections    int
-	MaxConnections int
+	connections    int64
+	maxconnections int64
+	cond           *sync.Cond
 }
 
 func NewWOFClone(source string, dest string) *WOFClone {
 
 	// to do - add logging
 
-	dl := net.Dialer{
-		Timeout:   0,
-		KeepAlive: 0,
-	}
+	cd := &sync.Cond{L: &sync.Mutex{}}
 
-	tr := &http.Transport{
-		Dial: dl.Dial,
-	}
-
-	cl := &http.Client{
-	   Transport: tr,
-	}
+	cl := &http.Client{}
 
 	c := WOFClone{
 		Count:          0,
@@ -55,8 +47,9 @@ func NewWOFClone(source string, dest string) *WOFClone {
 		Source:         source,
 		Dest:           dest,
 		Client:         cl,
-		Connections:    0,
-		MaxConnections: 200,
+		connections:    0,
+		maxconnections: 200,
+		cond:           cd,
 	}
 
 	return &c
@@ -91,19 +84,11 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 			continue
 		}
 
-		for c.Connections > c.MaxConnections {
-
-		     	 if c.Connections < c.MaxConnections {
-			    log.Println("go")
-	    		    break
-	 		 }
-     		}
-
 		wg.Add(1)
 
 		go func() {
 			defer wg.Done()
-			c.FetchStore(rel_path)
+			c.PreProcess(rel_path)
 		}()
 	}
 
@@ -112,55 +97,26 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 	return nil
 }
 
-func (c *WOFClone) FetchStore(rel_path string) error {
+func (c *WOFClone) PreProcess(rel_path string) error {
 
 	c.Count += 1
 
-	remote_abspath := c.Source + rel_path
-	local_abspath := path.Join(c.Dest, rel_path)
+	remote := c.Source + rel_path
+	local := path.Join(c.Dest, rel_path)
 
-	_, err := os.Stat(local_abspath)
+	_, err := os.Stat(local)
 
 	if !os.IsNotExist(err) {
 
-		change, _ := c.HasChanged(local_abspath, remote_abspath)
+		change, _ := c.HasChanged(local, remote)
 
 		if !change {
 			return nil
 		}
 
-	} else {
-
-		local_root := path.Dir(local_abspath)
-
-		_, err := os.Stat(local_root)
-
-		if os.IsNotExist(err) {
-			log.Printf("create %s\n", local_root)
-			os.MkdirAll(local_root, 0755)
-		}
 	}
 
-	log.Printf("fetch '%s' and store in %s\n", remote_abspath, local_abspath)
-
-	rsp, fetch_err := c.Fetch("GET", remote_abspath)
-
-	if fetch_err != nil {
-		log.Println(fetch_err)
-		return fetch_err
-	}
-
-	contents, read_err := ioutil.ReadAll(rsp.Body)
-
-	if read_err != nil {
-		log.Println(read_err)
-	}
-
-	write_err := ioutil.WriteFile(local_abspath, contents, 0644)
-
-	if write_err != nil {
-		log.Println(write_err)
-	}
+	c.Process(remote, local)
 
 	return nil
 }
@@ -184,6 +140,8 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 		return change, err
 	}
 
+	defer rsp.Body.Close()
+
 	etag := rsp.Header.Get("Etag")
 	remote_hash := strings.Replace(etag, "\"", "", -1)
 
@@ -191,21 +149,73 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 		change = false
 	}
 
-	log.Printf("hash %s etag %s change %t\n", local_hash, remote_hash, change)
+	// log.Printf("hash %s etag %s change %t\n", local_hash, remote_hash, change)
 
 	return change, nil
 }
 
+func (c *WOFClone) Process(remote string, local string) error {
+
+	local_root := path.Dir(local)
+
+	_, err := os.Stat(local_root)
+
+	if os.IsNotExist(err) {
+		log.Printf("create %s\n", local_root)
+		os.MkdirAll(local_root, 0755)
+	}
+
+	log.Printf("fetch '%s' and store in %s\n", remote, local)
+
+	rsp, fetch_err := c.Fetch("GET", remote)
+
+	if fetch_err != nil {
+		log.Println(fetch_err)
+		return fetch_err
+	}
+
+	defer rsp.Body.Close()
+
+	contents, read_err := ioutil.ReadAll(rsp.Body)
+
+	if read_err != nil {
+		log.Println(read_err)
+		return read_err
+	}
+
+	go func() {
+		write_err := ioutil.WriteFile(local, contents, 0644)
+
+		if write_err != nil {
+			log.Println(write_err)
+		}
+	}()
+
+	return nil
+}
+
 func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
+
+	for {
+		c.cond.L.Lock()
+
+		for c.connections >= c.maxconnections {
+			c.cond.Wait()
+		}
+
+		atomic.AddInt64(&c.connections, 1)	
+
+		c.cond.L.Unlock()
+		c.cond.Signal()
+		break
+	}
 
 	req, _ := http.NewRequest(method, url, nil)
 	req.Close = true
 
-     c.Connections += 1
-
 	rsp, err := c.Client.Do(req)
 
-	c.Connections -= 1
+	atomic.AddInt64(&c.connections, -1)
 
 	return rsp, err
 }
