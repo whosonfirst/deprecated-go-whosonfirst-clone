@@ -5,9 +5,9 @@ import (
 	"encoding/hex"
 	"flag"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
+	log "github.com/whosonfirst/go-whosonfirst-log"
 	"io"
 	"io/ioutil"
-	log "github.com/whosonfirst/go-whosonfirst-log"
 	"net/http"
 	"os"
 	"path"
@@ -31,7 +31,7 @@ type WOFClone struct {
 	connections    int64
 	maxconnections int64
 	cond           *sync.Cond
-	logger	       *log.WOFLogger
+	logger         *log.WOFLogger
 }
 
 func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
@@ -40,7 +40,7 @@ func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
 
 	cd := &sync.Cond{L: &sync.Mutex{}}
 
-	cl := &http.Client{Timeout: 0}
+	cl := &http.Client{Timeout: 3}
 
 	c := WOFClone{
 		Count:          0,
@@ -49,7 +49,7 @@ func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
 		Skipped:        0,
 		Source:         source,
 		Dest:           dest,
-		logger:		logger,
+		logger:         logger,
 		client:         cl,
 		connections:    0,
 		maxconnections: 200,
@@ -105,8 +105,8 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 		}()
 	}
 
-	go func (){
-	
+	go func() {
+
 		for c.Completed < c.Scheduled {
 			c.logger.Info("scheduled: %d completed: %d connections: %d", c.Scheduled, c.Completed, c.connections)
 		}
@@ -119,7 +119,7 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 
 func (c *WOFClone) Clone(rel_path string) (bool, error) {
 
-     	c.logger.Debug("Pre-process %s", rel_path)
+	c.logger.Debug("Pre-process %s", rel_path)
 
 	atomic.AddInt64(&c.Count, 1)
 
@@ -127,18 +127,18 @@ func (c *WOFClone) Clone(rel_path string) (bool, error) {
 	local := path.Join(c.Dest, rel_path)
 
 	/*
-	_, err := os.Stat(local)
+		_, err := os.Stat(local)
 
-	if !os.IsNotExist(err) {
+		if !os.IsNotExist(err) {
 
-		change, _ := c.HasChanged(local, remote)
+			change, _ := c.HasChanged(local, remote)
 
-		if ! change {
-			atomic.AddInt64(&c.Skipped, 1)
-			return true, nil
+			if ! change {
+				atomic.AddInt64(&c.Skipped, 1)
+				return true, nil
+			}
+
 		}
-
-	}
 	*/
 
 	process_err := c.Process(remote, local)
@@ -188,7 +188,7 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 func (c *WOFClone) Process(remote string, local string) error {
 
-     	c.logger.Debug("fetch %s and store in %s", remote, local)
+	c.logger.Debug("fetch %s and store in %s", remote, local)
 
 	local_root := path.Dir(local)
 
@@ -223,9 +223,9 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 			// See the way we're in a goroutine? That means the parent function
 			// will return 'okay' without an error. So we're just going to account
-			// for that here... 
+			// for that here...
 
-			atomic.AddInt64(&c.Success, -1)	
+			atomic.AddInt64(&c.Success, -1)
 			atomic.AddInt64(&c.Error, 1)
 
 			return write_err
@@ -240,13 +240,13 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 
-     	c.logger.Debug("%s %s", method, url)
+	c.logger.Debug("%s %s", method, url)
 
 	for {
 		c.cond.L.Lock()
 
 		for c.connections > c.maxconnections {
-		    	c.logger.Debug("%d still > %d", c.connections, c.maxconnections)
+			c.logger.Debug("%d still > %d", c.connections, c.maxconnections)
 			c.cond.Wait()
 		}
 
@@ -265,8 +265,8 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 	atomic.AddInt64(&c.connections, -1)
 
 	if err != nil {
-	   c.logger.Error("Failed to %s %s, because %v", method, url, err)
-	   return nil, err
+		c.logger.Error("Failed to %s %s, because %v", method, url, err)
+		return nil, err
 	}
 
 	return rsp, err
@@ -306,5 +306,5 @@ func main() {
 	since := time.Since(start)
 	secs := float64(since) / 1e9
 
-	cl.logger.Info("processed %d files in %f seconds\n", cl.Count, secs)
+	cl.logger.Info("processed %d files (ok: %d error: %d) in %f seconds\n", cl.Count, cl.Success, cl.Error, secs)
 }
