@@ -34,14 +34,18 @@ func NewWOFClone(source string, dest string) *WOFClone {
 
 	// to do - add logging
 
-	transport := &http.Transport{
-		Dial: (&net.Dialer{
-			Timeout:   0,
-			KeepAlive: 0,
-		}).Dial,
+	dl := net.Dialer{
+		Timeout:   0,
+		KeepAlive: 0,
 	}
 
-	cl := &http.Client{Transport: transport}
+	tr := &http.Transport{
+		Dial: dl.Dial,
+	}
+
+	cl := &http.Client{
+	   Transport: tr,
+	}
 
 	c := WOFClone{
 		Count:          0,
@@ -49,7 +53,7 @@ func NewWOFClone(source string, dest string) *WOFClone {
 		Error:          0,
 		Skipped:        0,
 		Source:         source,
-		Dest:           source,
+		Dest:           dest,
 		Client:         cl,
 		Connections:    0,
 		MaxConnections: 200,
@@ -86,6 +90,14 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 		if !ok {
 			continue
 		}
+
+		for c.Connections > c.MaxConnections {
+
+		     	 if c.Connections < c.MaxConnections {
+			    log.Println("go")
+	    		    break
+	 		 }
+     		}
 
 		wg.Add(1)
 
@@ -189,8 +201,11 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 	req, _ := http.NewRequest(method, url, nil)
 	req.Close = true
 
+     c.Connections += 1
+
 	rsp, err := c.Client.Do(req)
-	//	defer rsp.Body.Close()
+
+	c.Connections -= 1
 
 	return rsp, err
 }
