@@ -40,7 +40,7 @@ func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
 
 	cd := &sync.Cond{L: &sync.Mutex{}}
 
-	cl := &http.Client{Timeout: 3}
+	cl := &http.Client{}
 
 	c := WOFClone{
 		Count:          0,
@@ -109,6 +109,7 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 
 		for c.Completed < c.Scheduled {
 			c.logger.Info("scheduled: %d completed: %d connections: %d", c.Scheduled, c.Completed, c.connections)
+			time.Sleep(1 * time.Second)
 		}
 	}()
 
@@ -126,20 +127,22 @@ func (c *WOFClone) Clone(rel_path string) (bool, error) {
 	remote := c.Source + rel_path
 	local := path.Join(c.Dest, rel_path)
 
-	/*
-		_, err := os.Stat(local)
+	_, err := os.Stat(local)
 
-		if !os.IsNotExist(err) {
+	if !os.IsNotExist(err) {
 
-			change, _ := c.HasChanged(local, remote)
+		change, _ := c.HasChanged(local, remote)
 
-			if ! change {
-				atomic.AddInt64(&c.Skipped, 1)
-				return true, nil
-			}
+		if !change {
 
+			c.logger.Debug("%s has not changed so skipping", local)
+
+			atomic.AddInt64(&c.Success, 1)
+			atomic.AddInt64(&c.Skipped, 1)
+			return true, nil
 		}
-	*/
+
+	}
 
 	process_err := c.Process(remote, local)
 
@@ -151,6 +154,49 @@ func (c *WOFClone) Clone(rel_path string) (bool, error) {
 	atomic.AddInt64(&c.Success, 1)
 	return true, nil
 }
+
+/*
+Okay, I figured out the problem I was seeing yesterday when checking
+ETags (now that the WOF meta files contain an MD5 hash of the records
+they list).
+
+For example:
+
+$> md5 /usr/local/mapzen/whosonfirst-data/data/404/529/391/404529391.geojson
+71714a9cb8d286eb50b9a300b7faa1c3
+
+If I request the same file from AWS proper everything is All Good (tm) :
+
+$> curl -v https://s3.amazonaws.com/whosonfirst.mapzen.com/data/404/529/391/404529391.geojson
+> /dev/null
+* Server certificate: s3.amazonaws.com
+< ETag: "71714a9cb8d286eb50b9a300b7faa1c3"
+
+OTOH if I request the same file from wof.mz.com/data I get this:
+
+$> curl -v https://whosonfirst.mapzen.com/data/404/529/391/404529391.geojson
+> /dev/null
+* Server certificate: whosonfirst.mapzen.com
+< ETag: "93ad7d36a39f0e98f4aa777f22c73c03193fe390"
+
+Which seems all weird-and-wtf until you remember that the nginx config
+for the spelunker tries to proxy files from the wof-data GH repository
+first and fall backs on AWS as a last resort:
+
+https://github.com/whosonfirst/whosonfirst-www-spelunker/blob/master/nginx/whosonfirst-www-spelunker.conf.example
+
+Who knows how GH is setting their ETags. I guess I don't really
+understand why they aren't just doing MD5 hashes too but it's their
+party so...
+
+So.
+
+The short answer is to also do a HEAD / ETag check against:
+
+https://s3.amazonaws.com/whosonfirst.mapzen.com/data/
+
+(20151027/thisisaaronland)
+*/
 
 func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
@@ -274,7 +320,9 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 
 func main() {
 
-	var source = flag.String("source", "http://whosonfirst.mapzen.com/data/", "Where to look for files")
+	// See notes inre source and Etags in the `HasChanged` method (20151027/thisisaaronland)
+
+	var source = flag.String("source", "https://s3.amazonaws.com/whosonfirst.mapzen.com/data/", "Where to look for files")
 	var dest = flag.String("dest", "", "Where to write files")
 	var loglevel = flag.String("loglevel", "debug", "The level of detail for logging")
 
@@ -306,5 +354,5 @@ func main() {
 	since := time.Since(start)
 	secs := float64(since) / 1e9
 
-	cl.logger.Info("processed %d files (ok: %d error: %d) in %f seconds\n", cl.Count, cl.Success, cl.Error, secs)
+	cl.logger.Info("processed %d files (ok: %d error: %d skipped: %d) in %f seconds\n", cl.Count, cl.Success, cl.Error, cl.Skipped, secs)
 }
