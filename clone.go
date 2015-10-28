@@ -6,6 +6,7 @@ import (
 	"flag"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
+	"github.com/jeffail/tunny"
 	golog "log"
 	"io"
 	"io/ioutil"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,15 +35,19 @@ type WOFClone struct {
 	maxconnections int64
 	cond           *sync.Cond
 	logger         *log.WOFLogger
+	pool	       *tunny.WorkPool
 }
 
 func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
 
-	// to do - add logging
-
 	cd := &sync.Cond{L: &sync.Mutex{}}
 
 	cl := &http.Client{}
+
+	numCPUs := runtime.NumCPU() * 4
+	runtime.GOMAXPROCS(numCPUs)
+
+	pool, _ := tunny.CreatePoolGeneric(numCPUs).Open()
 
 	c := WOFClone{
 		Count:          0,
@@ -55,6 +61,7 @@ func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
 		connections:    0,
 		maxconnections: 200,
 		cond:           cd,
+		pool:		pool,
 	}
 
 	return &c
@@ -95,31 +102,21 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 
 		go func() {
 
-			atomic.AddInt64(&c.Scheduled, 1)
+		   defer wg.Done()
 
-			defer wg.Done()
-			complete, _ := c.Clone(rel_path)
-
-			c.logger.Debug("Finised cloning %s: %t", rel_path, complete)
-
-			atomic.AddInt64(&c.Completed, 1)
+		   complete, _ := c.Clone(rel_path)
+		   c.logger.Debug("Finised cloning %s: %t", rel_path, complete)
 		}()
+
+		wg.Wait()
 	}
-
-	go func() {
-
-		for c.Completed < c.Scheduled {
-			c.logger.Info("scheduled: %d completed: %d connections: %d", c.Scheduled, c.Completed, c.connections)
-			time.Sleep(5 * time.Second)
-		}
-	}()
-
-	wg.Wait()
 
 	return nil
 }
 
 func (c *WOFClone) Clone(rel_path string) (bool, error) {
+
+        defer c.pool.Close()
 
 	c.logger.Debug("Pre-process %s", rel_path)
 
@@ -145,14 +142,23 @@ func (c *WOFClone) Clone(rel_path string) (bool, error) {
 
 	}
 
-	process_err := c.Process(remote, local)
+	_, err = c.pool.SendWork(func(){
 
-	if process_err != nil {
-		atomic.AddInt64(&c.Error, 1)
-		return false, process_err
-	}
+	       c.logger.Debug("WORKING")
 
-	atomic.AddInt64(&c.Success, 1)
+		atomic.AddInt64(&c.Scheduled, 1)
+
+		process_err := c.Process(remote, local)
+
+		atomic.AddInt64(&c.Completed, 1)
+
+		if process_err != nil {
+		   atomic.AddInt64(&c.Error, 1)
+		} else {
+		   atomic.AddInt64(&c.Success, 1)
+		}
+	})		
+	
 	return true, nil
 }
 
@@ -202,6 +208,7 @@ https://s3.amazonaws.com/whosonfirst.mapzen.com/data/
 func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
+	return change, nil
 
 	c.Throttle()
 
@@ -331,6 +338,17 @@ func (c *WOFClone) Throttle() {
 
 }
 
+func (c *WOFClone) Monitor () {
+
+	go func() {
+
+		for c.Completed < c.Scheduled {
+			c.logger.Info("scheduled: %d completed: %d connections: %d", c.Scheduled, c.Completed, c.connections)
+			time.Sleep(5 * time.Second)
+		}
+	}()
+}
+
 func main() {
 
 	// See notes inre source and Etags in the `HasChanged` method (20151027/thisisaaronland)
@@ -361,6 +379,8 @@ func main() {
 			cl.ParseMetaFile(file)
 		}()
 	}
+
+	cl.Monitor()
 
 	wg.Wait()
 
