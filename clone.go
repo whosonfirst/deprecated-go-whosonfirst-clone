@@ -9,7 +9,6 @@ import (
 	log "github.com/whosonfirst/go-whosonfirst-log"
 	"io"
 	"io/ioutil"
-	golog "log"
 	"net/http"
 	"os"
 	"path"
@@ -159,7 +158,6 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	if err != nil {
 		c.logger.Error("Failed to read %s, becase %v", local, err)
-		golog.Fatal(err)
 		return change, err
 	}
 
