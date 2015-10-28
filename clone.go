@@ -4,12 +4,12 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"flag"
+	"github.com/jeffail/tunny"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
-	"github.com/jeffail/tunny"
-	golog "log"
 	"io"
 	"io/ioutil"
+	golog "log"
 	"net/http"
 	"os"
 	"path"
@@ -22,55 +22,59 @@ import (
 )
 
 type WOFClone struct {
-	Source         string
-	Dest           string
-	Count          int64
-	Success        int64
-	Error          int64
-	Skipped        int64
-	Scheduled      int64
-	Completed      int64
-	client         *http.Client
-	connections    int64
-	maxconnections int64
-	cond           *sync.Cond
-	logger         *log.WOFLogger
-	pool	       *tunny.WorkPool
+	Source    string
+	Dest      string
+	Count     int64
+	Success   int64
+	Error     int64
+	Skipped   int64
+	Scheduled int64
+	Completed int64
+	client    *http.Client
+	/*
+		connections    int64
+		maxconnections int64
+		cond           *sync.Cond
+	*/
+	logger *log.WOFLogger
+	pool   *tunny.WorkPool
 }
 
 func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
 
-	cd := &sync.Cond{L: &sync.Mutex{}}
+	// cd := &sync.Cond{L: &sync.Mutex{}}
 
 	cl := &http.Client{}
 
-	numCPUs := runtime.NumCPU() * 4
+	numCPUs := 150 // runtime.NumCPU() * 10
 	runtime.GOMAXPROCS(numCPUs)
 
 	pool, _ := tunny.CreatePoolGeneric(numCPUs).Open()
 
 	c := WOFClone{
-		Count:          0,
-		Success:        0,
-		Error:          0,
-		Skipped:        0,
-		Source:         source,
-		Dest:           dest,
-		logger:         logger,
-		client:         cl,
-		connections:    0,
-		maxconnections: 200,
-		cond:           cd,
-		pool:		pool,
+		Count:   0,
+		Success: 0,
+		Error:   0,
+		Skipped: 0,
+		Source:  source,
+		Dest:    dest,
+		logger:  logger,
+		client:  cl,
+		/*
+			connections:    0,
+			maxconnections: 200,
+			cond:           cd,
+		*/
+		pool: pool,
 	}
 
 	return &c
 }
 
-func (c *WOFClone) ParseMetaFile(file string) error {
+func (c *WOFClone) CloneMetaFile(file string) error {
 
 	abs_path, _ := filepath.Abs(file)
-	c.logger.Debug("Parse meta file %s", abs_path)
+	// c.logger.Debug("Parse meta file %s", abs_path)
 
 	reader, read_err := csv.NewDictReader(abs_path)
 
@@ -99,26 +103,34 @@ func (c *WOFClone) ParseMetaFile(file string) error {
 		}
 
 		wg.Add(1)
+		atomic.AddInt64(&c.Scheduled, 1)
 
 		go func() {
 
-		   defer wg.Done()
+			defer wg.Done()
 
-		   complete, _ := c.Clone(rel_path)
-		   c.logger.Debug("Finised cloning %s: %t", rel_path, complete)
+			_, err = c.pool.SendWork(func() {
+
+				cl_err := c.ClonePath(rel_path, true)
+
+				if cl_err != nil {
+					atomic.AddInt64(&c.Error, 1)
+				} else {
+					atomic.AddInt64(&c.Success, 1)
+				}
+
+				atomic.AddInt64(&c.Completed, 1)
+				c.Status()
+			})
+
 		}()
-
-		wg.Wait()
 	}
 
+	wg.Wait()
 	return nil
 }
 
-func (c *WOFClone) Clone(rel_path string) (bool, error) {
-
-        defer c.pool.Close()
-
-	c.logger.Debug("Pre-process %s", rel_path)
+func (c *WOFClone) ClonePath(rel_path string, ensure_changes bool) error {
 
 	atomic.AddInt64(&c.Count, 1)
 
@@ -127,94 +139,34 @@ func (c *WOFClone) Clone(rel_path string) (bool, error) {
 
 	_, err := os.Stat(local)
 
-	if !os.IsNotExist(err) {
+	if !os.IsNotExist(err) && ensure_changes {
 
 		change, _ := c.HasChanged(local, remote)
 
 		if !change {
 
 			c.logger.Debug("%s has not changed so skipping", local)
-
-			atomic.AddInt64(&c.Success, 1)
 			atomic.AddInt64(&c.Skipped, 1)
-			return true, nil
+			return nil
 		}
 
 	}
 
-	_, err = c.pool.SendWork(func(){
+	process_err := c.Process(remote, local)
 
-	       c.logger.Debug("WORKING")
+	if process_err != nil {
+		atomic.AddInt64(&c.Error, 1)
+		return process_err
+	}
 
-		atomic.AddInt64(&c.Scheduled, 1)
-
-		process_err := c.Process(remote, local)
-
-		atomic.AddInt64(&c.Completed, 1)
-
-		if process_err != nil {
-		   atomic.AddInt64(&c.Error, 1)
-		} else {
-		   atomic.AddInt64(&c.Success, 1)
-		}
-	})		
-	
-	return true, nil
+	return nil
 }
-
-/*
-Okay, I figured out the problem I was seeing yesterday when checking
-ETags (now that the WOF meta files contain an MD5 hash of the records
-they list).
-
-For example:
-
-$> md5 /usr/local/mapzen/whosonfirst-data/data/404/529/391/404529391.geojson
-71714a9cb8d286eb50b9a300b7faa1c3
-
-If I request the same file from AWS proper everything is All Good (tm) :
-
-$> curl -v https://s3.amazonaws.com/whosonfirst.mapzen.com/data/404/529/391/404529391.geojson
-> /dev/null
-* Server certificate: s3.amazonaws.com
-< ETag: "71714a9cb8d286eb50b9a300b7faa1c3"
-
-OTOH if I request the same file from wof.mz.com/data I get this:
-
-$> curl -v https://whosonfirst.mapzen.com/data/404/529/391/404529391.geojson
-> /dev/null
-* Server certificate: whosonfirst.mapzen.com
-< ETag: "93ad7d36a39f0e98f4aa777f22c73c03193fe390"
-
-Which seems all weird-and-wtf until you remember that the nginx config
-for the spelunker tries to proxy files from the wof-data GH repository
-first and fall backs on AWS as a last resort:
-
-https://github.com/whosonfirst/whosonfirst-www-spelunker/blob/master/nginx/whosonfirst-www-spelunker.conf.example
-
-Who knows how GH is setting their ETags. I guess I don't really
-understand why they aren't just doing MD5 hashes too but it's their
-party so...
-
-So.
-
-The short answer is to also do a HEAD / ETag check against:
-
-https://s3.amazonaws.com/whosonfirst.mapzen.com/data/
-
-(20151027/thisisaaronland)
-*/
 
 func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
-	return change, nil
-
-	c.Throttle()
 
 	body, err := ioutil.ReadFile(local)
-
-	atomic.AddInt64(&c.connections, -1)
 
 	if err != nil {
 		c.logger.Error("Failed to read %s, becase %v", local, err)
@@ -239,8 +191,6 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 	if local_hash == remote_hash {
 		change = false
 	}
-
-	// log.Printf("hash %s etag %s change %t\n", local_hash, remote_hash, change)
 
 	return change, nil
 }
@@ -280,10 +230,6 @@ func (c *WOFClone) Process(remote string, local string) error {
 		if write_err != nil {
 			c.logger.Error("Failed to write %s, because %v", local, write_err)
 
-			// See the way we're in a goroutine? That means the parent function
-			// will return 'okay' without an error. So we're just going to account
-			// for that here...
-
 			atomic.AddInt64(&c.Success, -1)
 			atomic.AddInt64(&c.Error, 1)
 
@@ -301,52 +247,22 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 
 	c.logger.Debug("%s %s", method, url)
 
-	c.Throttle()
-
 	req, _ := http.NewRequest(method, url, nil)
 	req.Close = true
 
 	rsp, err := c.client.Do(req)
 
-	atomic.AddInt64(&c.connections, -1)
-
 	if err != nil {
 		c.logger.Error("Failed to %s %s, because %v", method, url, err)
-		golog.Fatal(err)
+		// golog.Fatal(err)
 		return nil, err
 	}
 
 	return rsp, err
 }
 
-func (c *WOFClone) Throttle() {
-
-	for {
-		c.cond.L.Lock()
-
-		for c.connections > c.maxconnections {
-			c.logger.Debug("%d still > %d", c.connections, c.maxconnections)
-			c.cond.Wait()
-		}
-
-		atomic.AddInt64(&c.connections, 1)
-
-		c.cond.L.Unlock()
-		c.cond.Broadcast()
-		break
-	}
-
-}
-
-func (c *WOFClone) Monitor () {
-
-	go func() {
-
-		for c.Completed < c.Scheduled {
-			c.logger.Info("scheduled: %d completed: %d connections: %d", c.Scheduled, c.Completed, c.connections)
-			time.Sleep(5 * time.Second)
-		}
-	}()
+func (c *WOFClone) Status() {
+	c.logger.Info("scheduled: %d completed: %d", c.Scheduled, c.Completed)
 }
 
 func main() {
@@ -368,21 +284,9 @@ func main() {
 
 	start := time.Now()
 
-	wg := new(sync.WaitGroup)
-
 	for _, file := range args {
-
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-			cl.ParseMetaFile(file)
-		}()
+		cl.CloneMetaFile(file)
 	}
-
-	cl.Monitor()
-
-	wg.Wait()
 
 	since := time.Since(start)
 	secs := float64(since) / 1e9
