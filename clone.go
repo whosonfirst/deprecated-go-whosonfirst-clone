@@ -31,25 +31,19 @@ type WOFClone struct {
 	Scheduled int64
 	Completed int64
 	client    *http.Client
-	/*
-		connections    int64
-		maxconnections int64
-		cond           *sync.Cond
-	*/
-	logger *log.WOFLogger
-	pool   *tunny.WorkPool
+	logger    *log.WOFLogger
+	pool      *tunny.WorkPool
 }
 
-func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
+func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *WOFClone {
 
 	// cd := &sync.Cond{L: &sync.Mutex{}}
 
 	cl := &http.Client{}
 
-	numCPUs := 150 // runtime.NumCPU() * 10
-	runtime.GOMAXPROCS(numCPUs)
+	runtime.GOMAXPROCS(procs)
 
-	pool, _ := tunny.CreatePoolGeneric(numCPUs).Open()
+	pool, _ := tunny.CreatePoolGeneric(procs).Open()
 
 	c := WOFClone{
 		Count:   0,
@@ -60,12 +54,7 @@ func NewWOFClone(source string, dest string, logger *log.WOFLogger) *WOFClone {
 		Dest:    dest,
 		logger:  logger,
 		client:  cl,
-		/*
-			connections:    0,
-			maxconnections: 200,
-			cond:           cd,
-		*/
-		pool: pool,
+		pool:    pool,
 	}
 
 	return &c
@@ -262,16 +251,15 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 }
 
 func (c *WOFClone) Status() {
-	c.logger.Info("scheduled: %d completed: %d", c.Scheduled, c.Completed)
+	c.logger.Info("scheduled: %d completed: %d success: %d error: %d goroutines: %d", c.Scheduled, c.Completed, c.Success, c.Error, runtime.NumGoroutine())
 }
 
 func main() {
 
-	// See notes inre source and Etags in the `HasChanged` method (20151027/thisisaaronland)
-
 	var source = flag.String("source", "https://s3.amazonaws.com/whosonfirst.mapzen.com/data/", "Where to look for files")
 	var dest = flag.String("dest", "", "Where to write files")
-	var loglevel = flag.String("loglevel", "debug", "The level of detail for logging")
+	var procs = flag.Int("procs", 200, "The number of concurrent processes to clone data with")
+	var loglevel = flag.String("loglevel", "info", "The level of detail for logging")
 
 	flag.Parse()
 	args := flag.Args()
@@ -280,7 +268,7 @@ func main() {
 
 	lg := log.NewWOFLogger(writer, "[clone] ", *loglevel)
 
-	cl := NewWOFClone(*source, *dest, lg)
+	cl := NewWOFClone(*source, *dest, *procs, lg)
 
 	start := time.Now()
 
