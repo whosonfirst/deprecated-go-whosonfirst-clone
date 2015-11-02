@@ -1,9 +1,8 @@
-package main
+package clone
 
 import (
 	"crypto/md5"
 	"encoding/hex"
-	"flag"
 	"github.com/jeffail/tunny"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
@@ -17,7 +16,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type WOFClone struct {
@@ -29,8 +27,8 @@ type WOFClone struct {
 	Skipped   int64
 	Scheduled int64
 	Completed int64
+	Logger    *log.WOFLogger
 	client    *http.Client
-	logger    *log.WOFLogger
 	pool      *tunny.WorkPool
 }
 
@@ -51,7 +49,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 		Skipped: 0,
 		Source:  source,
 		Dest:    dest,
-		logger:  logger,
+		Logger:  logger,
 		client:  cl,
 		pool:    pool,
 	}
@@ -62,12 +60,12 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 func (c *WOFClone) CloneMetaFile(file string) error {
 
 	abs_path, _ := filepath.Abs(file)
-	// c.logger.Debug("Parse meta file %s", abs_path)
+	// c.Logger.Debug("Parse meta file %s", abs_path)
 
 	reader, read_err := csv.NewDictReader(abs_path)
 
 	if read_err != nil {
-		c.logger.Error("Failed to read %s, because %v", abs_path, read_err)
+		c.Logger.Error("Failed to read %s, because %v", abs_path, read_err)
 		return read_err
 	}
 
@@ -133,7 +131,7 @@ func (c *WOFClone) ClonePath(rel_path string, ensure_changes bool) error {
 
 		if !change {
 
-			c.logger.Debug("%s has not changed so skipping", local)
+			c.Logger.Debug("%s has not changed so skipping", local)
 			atomic.AddInt64(&c.Skipped, 1)
 			return nil
 		}
@@ -157,7 +155,7 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 	body, err := ioutil.ReadFile(local)
 
 	if err != nil {
-		c.logger.Error("Failed to read %s, becase %v", local, err)
+		c.Logger.Error("Failed to read %s, becase %v", local, err)
 		return change, err
 	}
 
@@ -184,14 +182,14 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 func (c *WOFClone) Process(remote string, local string) error {
 
-	c.logger.Debug("fetch %s and store in %s", remote, local)
+	c.Logger.Debug("fetch %s and store in %s", remote, local)
 
 	local_root := path.Dir(local)
 
 	_, err := os.Stat(local_root)
 
 	if os.IsNotExist(err) {
-		c.logger.Info("create %s", local_root)
+		c.Logger.Info("create %s", local_root)
 		os.MkdirAll(local_root, 0755)
 	}
 
@@ -206,7 +204,7 @@ func (c *WOFClone) Process(remote string, local string) error {
 	contents, read_err := ioutil.ReadAll(rsp.Body)
 
 	if read_err != nil {
-		c.logger.Error("failed to read body for %s, because %v", remote, read_err)
+		c.Logger.Error("failed to read body for %s, because %v", remote, read_err)
 		return read_err
 	}
 
@@ -215,7 +213,7 @@ func (c *WOFClone) Process(remote string, local string) error {
 		write_err := ioutil.WriteFile(local, contents, 0644)
 
 		if write_err != nil {
-			c.logger.Error("Failed to write %s, because %v", local, write_err)
+			c.Logger.Error("Failed to write %s, because %v", local, write_err)
 
 			atomic.AddInt64(&c.Success, -1)
 			atomic.AddInt64(&c.Error, 1)
@@ -223,7 +221,7 @@ func (c *WOFClone) Process(remote string, local string) error {
 			return write_err
 		}
 
-		c.logger.Debug("Wrote %s to disk", local)
+		c.Logger.Debug("Wrote %s to disk", local)
 		return nil
 	}()
 
@@ -232,7 +230,7 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 
-	c.logger.Debug("%s %s", method, url)
+	c.Logger.Debug("%s %s", method, url)
 
 	req, _ := http.NewRequest(method, url, nil)
 	req.Close = true
@@ -240,7 +238,7 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 	rsp, err := c.client.Do(req)
 
 	if err != nil {
-		c.logger.Error("Failed to %s %s, because %v", method, url, err)
+		c.Logger.Error("Failed to %s %s, because %v", method, url, err)
 		// golog.Fatal(err)
 		return nil, err
 	}
@@ -249,33 +247,5 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 }
 
 func (c *WOFClone) Status() {
-	c.logger.Info("scheduled: %d completed: %d success: %d error: %d goroutines: %d", c.Scheduled, c.Completed, c.Success, c.Error, runtime.NumGoroutine())
-}
-
-func main() {
-
-	var source = flag.String("source", "https://s3.amazonaws.com/whosonfirst.mapzen.com/data/", "Where to look for files")
-	var dest = flag.String("dest", "", "Where to write files")
-	var procs = flag.Int("procs", 200, "The number of concurrent processes to clone data with")
-	var loglevel = flag.String("loglevel", "info", "The level of detail for logging")
-
-	flag.Parse()
-	args := flag.Args()
-
-	writer := io.MultiWriter(os.Stdout)
-
-	lg := log.NewWOFLogger(writer, "[clone] ", *loglevel)
-
-	cl := NewWOFClone(*source, *dest, *procs, lg)
-
-	start := time.Now()
-
-	for _, file := range args {
-		cl.CloneMetaFile(file)
-	}
-
-	since := time.Since(start)
-	secs := float64(since) / 1e9
-
-	cl.logger.Info("processed %d files (ok: %d error: %d skipped: %d) in %f seconds\n", cl.Count, cl.Success, cl.Error, cl.Skipped, secs)
+	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d goroutines: %d", c.Scheduled, c.Completed, c.Success, c.Error, runtime.NumGoroutine())
 }
