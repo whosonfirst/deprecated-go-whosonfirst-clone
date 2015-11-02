@@ -88,6 +88,22 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 			continue
 		}
 
+		ensure_changes := true
+
+		/*
+			file_hash, ok := row["file_hash"]
+
+			if ok {
+			   remote := c.Source + rel_path	// sudo put me in a method
+			   change, _ := c.HasHashChanged(file_hash, remote)
+
+			   if !change{
+			      c.logger.Info("no changes to %s", file_hash)
+			      ensure_changes = false
+			   }
+			}
+		*/
+
 		wg.Add(1)
 		atomic.AddInt64(&c.Scheduled, 1)
 
@@ -97,7 +113,7 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 
 			_, err = c.pool.SendWork(func() {
 
-				cl_err := c.ClonePath(rel_path, true)
+				cl_err := c.ClonePath(rel_path, ensure_changes)
 
 				if cl_err != nil {
 					atomic.AddInt64(&c.Error, 1)
@@ -148,6 +164,8 @@ func (c *WOFClone) ClonePath(rel_path string, ensure_changes bool) error {
 	return nil
 }
 
+// don't return true if there's a problem - move that logic up above
+
 func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
@@ -161,6 +179,13 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	hash := md5.Sum(body)
 	local_hash := hex.EncodeToString(hash[:])
+
+	return c.HasHashChanged(local_hash, remote)
+}
+
+func (c *WOFClone) HasHashChanged(local_hash string, remote string) (bool, error) {
+
+	change := true
 
 	rsp, err := c.Fetch("HEAD", remote)
 
