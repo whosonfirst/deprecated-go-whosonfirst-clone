@@ -1,10 +1,10 @@
 # go-whosonfirst-clone
 
-YOU SHOULD NOT USE THIS YET. IT IS NOT READY FOR YOUR LOVING EMBRACE. NO, NOT YET.
+Tools and libraries for cloning (not syncing) Who's on First data to your local machine.
 
-For the adventurous...
+This is still very much a work in progress so you might want to wait before using it. For the adventurous...
 
-#Prereqs
+## Prereqs
 
 Install GO! There are package installers for Mac and Windows, and build from source options.
 
@@ -14,7 +14,7 @@ TIP: On Mac, verify your bash profile includes:
 
     export PATH=$PATH:/usr/local/go/bin
 
-#Installation
+## Installation
 
 Clone the repo:
 
@@ -44,9 +44,12 @@ Compile the WOF-Clone GO tools to binary:
 
     make bin
 
-
-# Run it
+## Run it
 
 Then run it using:
 
     ./bin/wof-clone -dest /usr/local/mapzen/whosonfirst-data/data/ ../whosonfirst-data/meta/wof-*-latest.csv
+
+## See also
+
+* https://github.com/whosonfirst/go-whosonfirst-howto
