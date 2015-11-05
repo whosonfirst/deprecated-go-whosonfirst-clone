@@ -88,30 +88,29 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 			continue
 		}
 
+		// this does not account for counts - need to think about who calls what, when
+		// probably needs to moved in to ClonePath... (20151105/thisisaaronland)
+
 		ensure_changes := true
+		skip_existing := false
 
-		/*
-			skip_existing := true
+		remote := c.Source + rel_path
+		local := path.Join(c.Dest, rel_path)
 
-			remote := c.Source + rel_path
-			local := path.Join(c.Dest, rel_path)
+		if !os.IsNotExist(err) {
 
-			if !os.IsNotExist(err) {
-
-			   if skip_existing {
-			      c.Logger.Debug("%s already exists and we are skipping things that exist", local)
-			      continue
-			   }
-
-			   // hash file here...
-
-			   change, _ := c.HasHashChanged(file_hash, remote)
-
-			   if !change{
-			      c.logger.Info("no changes to %s", file_hash)
-			      ensure_changes = false
+			if skip_existing {
+				c.Logger.Debug("%s already exists and we are skipping things that exist", local)
+				continue
 			}
-		*/
+
+			change, _ := c.HasChanged(local, remote)
+
+			if !change {
+				c.Logger.Info("no changes to %s", local)
+				continue
+			}
+		}
 
 		wg.Add(1)
 		atomic.AddInt64(&c.Scheduled, 1)
