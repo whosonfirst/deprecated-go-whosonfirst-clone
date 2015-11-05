@@ -91,16 +91,25 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 		ensure_changes := true
 
 		/*
-			file_hash, ok := row["file_hash"]
+			skip_existing := true
 
-			if ok {
-			   remote := c.Source + rel_path	// sudo put me in a method
+			remote := c.Source + rel_path
+			local := path.Join(c.Dest, rel_path)
+
+			if !os.IsNotExist(err) {
+
+			   if skip_existing {
+			      c.Logger.Debug("%s already exists and we are skipping things that exist", local)
+			      continue
+			   }
+
+			   // hash file here...
+
 			   change, _ := c.HasHashChanged(file_hash, remote)
 
 			   if !change{
 			      c.logger.Info("no changes to %s", file_hash)
 			      ensure_changes = false
-			   }
 			}
 		*/
 
