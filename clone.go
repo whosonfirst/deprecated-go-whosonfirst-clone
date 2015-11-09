@@ -286,7 +286,7 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 		return nil, errors.New(rsp.Status)
 	}
 
-	return rsp, err
+	return rsp, nil
 }
 
 func (c *WOFClone) Status() {
