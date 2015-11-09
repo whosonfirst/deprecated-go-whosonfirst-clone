@@ -3,6 +3,7 @@ package clone
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"github.com/jeffail/tunny"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
@@ -274,6 +275,13 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 		c.Logger.Error("Failed to %s %s, because %v", method, url, err)
 		// golog.Fatal(err)
 		return nil, err
+	}
+
+	expected := 200
+
+	if rsp.StatusCode != expected {
+		c.Logger.Error("Failed to %s %s, because we expected %d from S3 and got '%s' instead", method, url, expected, rsp.Status)
+		return nil, errors.New(rsp.Status)
 	}
 
 	return rsp, err
