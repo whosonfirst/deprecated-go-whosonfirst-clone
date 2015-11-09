@@ -277,6 +277,8 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 		return nil, err
 	}
 
+	// See also: https://github.com/whosonfirst/go-whosonfirst-clone/issues/6
+
 	expected := 200
 
 	if rsp.StatusCode != expected {
