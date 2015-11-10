@@ -20,18 +20,19 @@ import (
 )
 
 type WOFClone struct {
-	Source    string
-	Dest      string
-	Success   int64
-	Error     int64
-	Skipped   int64
-	Scheduled int64
-	Completed int64
-	Failed    []string
-	Logger    *log.WOFLogger
-	client    *http.Client
-	retries   *pool.LIFOPool
-	workpool  *tunny.WorkPool
+	Source     string
+	Dest       string
+	Success    int64
+	Error      int64
+	Skipped    int64
+	Scheduled  int64
+	Completed  int64
+	MaxRetries float64 // max percentage of errors over scheduled
+	Failed     []string
+	Logger     *log.WOFLogger
+	client     *http.Client
+	retries    *pool.LIFOPool
+	workpool   *tunny.WorkPool
 }
 
 func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *WOFClone {
@@ -44,15 +45,16 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 	retries := pool.NewLIFOPool()
 
 	c := WOFClone{
-		Success:  0,
-		Error:    0,
-		Skipped:  0,
-		Source:   source,
-		Dest:     dest,
-		Logger:   logger,
-		client:   cl,
-		workpool: workpool,
-		retries:  retries,
+		Success:    0,
+		Error:      0,
+		Skipped:    0,
+		Source:     source,
+		Dest:       dest,
+		Logger:     logger,
+		MaxRetries: 25.0, // maybe allow this to be user-defined ?
+		client:     cl,
+		workpool:   workpool,
+		retries:    retries,
 	}
 
 	return &c
@@ -157,7 +159,11 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 
 	wg.Wait()
 
-	c.ProcessRetries()
+	ok := c.ProcessRetries()
+
+	if !ok {
+		c.Logger.Warning("failed to process retries")
+	}
 
 	return nil
 }
@@ -166,14 +172,17 @@ func (c *WOFClone) ProcessRetries() bool {
 
 	to_retry := c.retries.Length()
 
-	// sudo figure out how many retries is just too many to bother trying
-	// some percentage of the total number of attempts that have been
-	// scheduled (20151109/thisisaaronland)
-
-	// if too many
-	// return false
-
 	if to_retry > 0 {
+
+		scheduled_f := float64(c.Scheduled)
+		retry_f := float64(to_retry)
+
+		pct := (retry_f / scheduled_f) * 100.0
+
+		if pct > c.MaxRetries {
+			c.Logger.Warning("E_EXCESSIVE_ERRORS, %f percent of scheduled processes failed thus undermining our faith that they will work now...", pct)
+			return false
+		}
 
 		c.Logger.Info("There are %d failed requests that will now be retried", to_retry)
 
@@ -356,7 +365,7 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 	expected := 200
 
 	if rsp.StatusCode != expected {
-		c.Logger.Error("Failed to %s %s, because we expected %d from S3 and got '%s' instead", method, url, expected, rsp.Status)
+		c.Logger.Error("Failed to %s %s, because we expected %d from source and got '%s' instead", method, url, expected, rsp.Status)
 		return nil, errors.New(rsp.Status)
 	}
 

@@ -6,7 +6,7 @@ This is still very much a work in progress so you might want to wait before usin
 
 ## Prereqs
 
-Install GO! There are package installers for Mac and Windows, and build from source options.
+Install [Go](https://golang.org). There are package installers for Mac and Windows, and build from source options.
 
 * https://golang.org/dl/
 
