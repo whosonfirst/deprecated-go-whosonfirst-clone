@@ -23,7 +23,6 @@ import (
 type WOFClone struct {
 	Source    string
 	Dest      string
-	Count     int64
 	Success   int64
 	Error     int64
 	Skipped   int64
@@ -46,7 +45,6 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 	retries := pool.NewLIFOPool()
 
 	c := WOFClone{
-		Count:    0,
 		Success:  0,
 		Error:    0,
 		Skipped:  0,
@@ -142,16 +140,65 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 
 	wg.Wait()
 
-	if c.retries.Length() != 0 {
-		c.Logger.Info("RETRY HERE")
+	// sudo put me in another function
+	// (20151109/thisisaaronland)
+
+	to_retry := c.retries.Length()
+
+	// sudo figure out how many retries is just too many to bother trying
+	// some percentage of the total number of attempts that have been
+	// scheduled (20151109/thisisaaronland)
+
+	if to_retry > 0 {
+
+		c.Logger.Info("There are %d failed requests that will now be retried", to_retry)
+
+		wg := new(sync.WaitGroup)
+
+		for c.retries.Length() > 0 {
+
+			r, ok := c.retries.Pop()
+
+			if !ok {
+				c.Logger.Error("failed to pop retries because... computers?")
+				break
+			}
+
+			rel_path := r.StringValue()
+
+			atomic.AddInt64(&c.Scheduled, 1)
+			wg.Add(1)
+
+			go func() {
+
+				defer wg.Done()
+
+				c.workpool.SendWork(func() {
+
+					ensure_changes := true
+
+					cl_err := c.ClonePath(rel_path, ensure_changes)
+
+					if cl_err != nil {
+						atomic.AddInt64(&c.Error, 1)
+					} else {
+						atomic.AddInt64(&c.Error, -1)
+					}
+
+					atomic.AddInt64(&c.Completed, 1)
+					c.Status()
+				})
+
+			}()
+		}
+
+		wg.Wait()
 	}
 
 	return nil
 }
 
 func (c *WOFClone) ClonePath(rel_path string, ensure_changes bool) error {
-
-	atomic.AddInt64(&c.Count, 1)
 
 	remote := c.Source + rel_path
 	local := path.Join(c.Dest, rel_path)
@@ -174,7 +221,6 @@ func (c *WOFClone) ClonePath(rel_path string, ensure_changes bool) error {
 	process_err := c.Process(remote, local)
 
 	if process_err != nil {
-		atomic.AddInt64(&c.Error, 1)
 		return process_err
 	}
 
@@ -297,5 +343,5 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 }
 
 func (c *WOFClone) Status() {
-	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d goroutines: %d", c.Scheduled, c.Completed, c.Success, c.Error, runtime.NumGoroutine())
+	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d retry: %d goroutines: %d", c.Scheduled, c.Completed, c.Success, c.Error, c.retries.Length(), runtime.NumGoroutine())
 }

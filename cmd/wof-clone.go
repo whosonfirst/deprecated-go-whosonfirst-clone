@@ -35,5 +35,5 @@ func main() {
 	since := time.Since(start)
 	secs := float64(since) / 1e9
 
-	cl.Logger.Info("processed %d files (ok: %d error: %d skipped: %d) in %f seconds\n", cl.Count, cl.Success, cl.Error, cl.Skipped, secs)
+	cl.Logger.Info("processed %d files (ok: %d error: %d skipped: %d) in %f seconds\n", cl.Scheduled, cl.Success, cl.Error, cl.Skipped, secs)
 }
