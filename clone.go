@@ -89,6 +89,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 		}
 
 		ensure_changes := true
+		has_changes := true
 		carry_on := false
 
 		remote := c.Source + rel_path
@@ -103,9 +104,16 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 
 			} else {
 
-				change, _ := c.HasChanged(local, remote)
+				file_hash, ok := row["file_hash"]
 
-				if !change {
+				if ok {
+					c.Logger.Debug("comparing hardcoded hash (%s) for %s", file_hash, local)
+					has_changes, _ = c.HasHashChanged(file_hash, remote)
+				} else {
+					has_changes, _ = c.HasChanged(local, remote)
+				}
+
+				if !has_changes {
 					c.Logger.Info("no changes to %s", local)
 					carry_on = true
 				}
