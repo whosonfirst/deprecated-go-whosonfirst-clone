@@ -62,7 +62,7 @@ Usage of ./bin/wof-clone:
   -skip-existing
 	Skip existing files on disk (without checking for remote changes)
   -source string
-    	  Where to look for files (default "https://s3.amazonaws.com/whosonfirst.mapzen.com/data/")
+    	  Where to look for files (default "https://whosonfirst.mapzen.com/data/")
 ```
 
 ### Example

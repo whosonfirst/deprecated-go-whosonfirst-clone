@@ -12,7 +12,7 @@ import (
 
 func main() {
 
-	var source = flag.String("source", "https://s3.amazonaws.com/whosonfirst.mapzen.com/data/", "Where to look for files")
+	var source = flag.String("source", "https://whosonfirst.mapzen.com/data/", "Where to look for files")
 	var dest = flag.String("dest", "", "Where to write files")
 	var procs = flag.Int("procs", (runtime.NumCPU() * 2), "The number of concurrent processes to clone data with")
 	var loglevel = flag.String("loglevel", "info", "The level of detail for logging")
