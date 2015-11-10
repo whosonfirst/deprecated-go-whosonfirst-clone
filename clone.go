@@ -1,13 +1,12 @@
 package clone
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"errors"
 	"github.com/jeffail/tunny"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
 	pool "github.com/whosonfirst/go-whosonfirst-pool"
+	utils "github.com/whosonfirst/go-whosonfirst-utils"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -59,7 +58,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 	return &c
 }
 
-func (c *WOFClone) CloneMetaFile(file string) error {
+func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 
 	abs_path, _ := filepath.Abs(file)
 
@@ -89,11 +88,8 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 			continue
 		}
 
-		// this does not account for counts - need to think about who calls what, when
-		// probably needs to moved in to ClonePath... (20151105/thisisaaronland)
-
 		ensure_changes := true
-		skip_existing := false
+		carry_on := false
 
 		remote := c.Source + rel_path
 		local := path.Join(c.Dest, rel_path)
@@ -101,16 +97,29 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 		if !os.IsNotExist(err) {
 
 			if skip_existing {
+
 				c.Logger.Debug("%s already exists and we are skipping things that exist", local)
+				carry_on = true
+
+			} else {
+
+				change, _ := c.HasChanged(local, remote)
+
+				if !change {
+					c.Logger.Info("no changes to %s", local)
+					carry_on = true
+				}
+			}
+
+			if carry_on {
+
+				atomic.AddInt64(&c.Scheduled, 1)
+				atomic.AddInt64(&c.Completed, 1)
+				atomic.AddInt64(&c.Skipped, 1)
 				continue
 			}
 
-			change, _ := c.HasChanged(local, remote)
-
-			if !change {
-				c.Logger.Info("no changes to %s", local)
-				continue
-			}
+			ensure_changes = false
 		}
 
 		wg.Add(1)
@@ -140,14 +149,21 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 
 	wg.Wait()
 
-	// sudo put me in another function
-	// (20151109/thisisaaronland)
+	c.ProcessRetries()
+
+	return nil
+}
+
+func (c *WOFClone) ProcessRetries() bool {
 
 	to_retry := c.retries.Length()
 
 	// sudo figure out how many retries is just too many to bother trying
 	// some percentage of the total number of attempts that have been
 	// scheduled (20151109/thisisaaronland)
+
+	// if too many
+	// return false
 
 	if to_retry > 0 {
 
@@ -195,7 +211,7 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 		wg.Wait()
 	}
 
-	return nil
+	return true
 }
 
 func (c *WOFClone) ClonePath(rel_path string, ensure_changes bool) error {
@@ -233,15 +249,12 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
 
-	body, err := ioutil.ReadFile(local)
+	local_hash, err := utils.HashFile(local)
 
 	if err != nil {
-		c.Logger.Error("Failed to read %s, becase %v", local, err)
+		c.Logger.Error("Failed to hash %s, becase %v", local, err)
 		return change, err
 	}
-
-	hash := md5.Sum(body)
-	local_hash := hex.EncodeToString(hash[:])
 
 	return c.HasHashChanged(local_hash, remote)
 }

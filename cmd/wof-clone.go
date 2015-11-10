@@ -16,6 +16,7 @@ func main() {
 	var dest = flag.String("dest", "", "Where to write files")
 	var procs = flag.Int("procs", (runtime.NumCPU() * 2), "The number of concurrent processes to clone data with")
 	var loglevel = flag.String("loglevel", "info", "The level of detail for logging")
+	var skip_existing = flag.Bool("skip-existing", false, "Skip existing files on disk (without checking for remote changes)")
 
 	flag.Parse()
 	args := flag.Args()
@@ -29,7 +30,7 @@ func main() {
 	start := time.Now()
 
 	for _, file := range args {
-		cl.CloneMetaFile(file)
+		cl.CloneMetaFile(file, *skip_existing)
 	}
 
 	since := time.Since(start)
