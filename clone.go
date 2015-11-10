@@ -7,6 +7,7 @@ import (
 	"github.com/jeffail/tunny"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
+	pool "github.com/whosonfirst/go-whosonfirst-pool"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -28,31 +29,33 @@ type WOFClone struct {
 	Skipped   int64
 	Scheduled int64
 	Completed int64
+	Failed    []string
 	Logger    *log.WOFLogger
 	client    *http.Client
-	pool      *tunny.WorkPool
+	retries   *pool.LIFOPool
+	workpool  *tunny.WorkPool
 }
 
 func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *WOFClone {
-
-	// cd := &sync.Cond{L: &sync.Mutex{}}
 
 	cl := &http.Client{}
 
 	runtime.GOMAXPROCS(procs)
 
-	pool, _ := tunny.CreatePoolGeneric(procs).Open()
+	workpool, _ := tunny.CreatePoolGeneric(procs).Open()
+	retries := pool.NewLIFOPool()
 
 	c := WOFClone{
-		Count:   0,
-		Success: 0,
-		Error:   0,
-		Skipped: 0,
-		Source:  source,
-		Dest:    dest,
-		Logger:  logger,
-		client:  cl,
-		pool:    pool,
+		Count:    0,
+		Success:  0,
+		Error:    0,
+		Skipped:  0,
+		Source:   source,
+		Dest:     dest,
+		Logger:   logger,
+		client:   cl,
+		workpool: workpool,
+		retries:  retries,
 	}
 
 	return &c
@@ -61,7 +64,6 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 func (c *WOFClone) CloneMetaFile(file string) error {
 
 	abs_path, _ := filepath.Abs(file)
-	// c.Logger.Debug("Parse meta file %s", abs_path)
 
 	reader, read_err := csv.NewDictReader(abs_path)
 
@@ -120,12 +122,13 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 
 			defer wg.Done()
 
-			_, err = c.pool.SendWork(func() {
+			_, err = c.workpool.SendWork(func() {
 
 				cl_err := c.ClonePath(rel_path, ensure_changes)
 
 				if cl_err != nil {
 					atomic.AddInt64(&c.Error, 1)
+					c.retries.Push(&pool.PoolString{String: rel_path})
 				} else {
 					atomic.AddInt64(&c.Success, 1)
 				}
@@ -138,6 +141,11 @@ func (c *WOFClone) CloneMetaFile(file string) error {
 	}
 
 	wg.Wait()
+
+	if c.retries.Length() != 0 {
+		c.Logger.Info("RETRY HERE")
+	}
+
 	return nil
 }
 
@@ -273,7 +281,6 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 
 	if err != nil {
 		c.Logger.Error("Failed to %s %s, because %v", method, url, err)
-		// golog.Fatal(err)
 		return nil, err
 	}
 
