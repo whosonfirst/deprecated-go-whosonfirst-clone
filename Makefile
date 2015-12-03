@@ -16,7 +16,7 @@ deps:
 bin:	clone
 
 clone:	fmt self
-	go build -o bin/wof-clone cmd/wof-clone.go
+	go build -o bin/wof-clone-metafiles cmd/wof-clone-metafiles.go
 
 fmt:
 	go fmt *.go
