@@ -23,9 +23,10 @@ func main() {
 
 	writer := io.MultiWriter(os.Stdout)
 
-	lg := log.NewWOFLogger(writer, "[clone] ", *loglevel)
+	logger := log.NewWOFLogger("[wof-clone-metafiles] ")
+	logger.AddLogger(writer, *loglevel)
 
-	cl := clone.NewWOFClone(*source, *dest, *procs, lg)
+	cl := clone.NewWOFClone(*source, *dest, *procs, logger)
 
 	start := time.Now()
 

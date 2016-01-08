@@ -6,17 +6,19 @@ self:	prep
 	mkdir -p src/github.com/whosonfirst/go-whosonfirst-clone
 	cp clone.go src/github.com/whosonfirst/go-whosonfirst-clone/
 
+build:	deps fmt bin
+
 deps:
-	go get -u "github.com/whosonfirst/go-whosonfirst-csv"
-	go get -u "github.com/whosonfirst/go-whosonfirst-log"
-	go get -u "github.com/whosonfirst/go-whosonfirst-pool"
-	go get -u "github.com/whosonfirst/go-whosonfirst-utils"
-	go get -u "github.com/jeffail/tunny"
+	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-csv"
+	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-log"
+	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-pool"
+	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-utils"
+	@GOPATH=$(shell pwd) go get -u "github.com/jeffail/tunny"
 
 bin:	clone
 
 clone:	fmt self
-	go build -o bin/wof-clone-metafiles cmd/wof-clone-metafiles.go
+	@GOPATH=$(shell pwd) go build -o bin/wof-clone-metafiles cmd/wof-clone-metafiles.go
 
 fmt:
 	go fmt *.go

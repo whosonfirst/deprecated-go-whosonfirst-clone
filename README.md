@@ -4,7 +4,9 @@ Tools and libraries for cloning (not syncing) Who's on First data to your local 
 
 This is still very much a work in progress so you might want to wait before using it. For the adventurous...
 
-## Prereqs
+## Setup
+
+### Go
 
 Install [Go](https://golang.org). There are package installers for Mac and Windows, and build from source options.
 
@@ -14,39 +16,25 @@ TIP: On Mac, verify your bash profile includes:
 
     export PATH=$PATH:/usr/local/go/bin
 
+Next clone this repo (assuming you haven't already done that :-)
+
+```
+$> git clone git@github.com:whosonfirst/go-whosonfirst-clone.git
+```
+
 ## Installation
 
-Clone the repo:
-
-    git clone git@github.com:whosonfirst/go-whosonfirst-clone.git
-
-Move into the repo's directory with:
-
-    cd go-whosonfirst-clone
-
-Setup that director as a new GO workspace:
-
-    export GOPATH=`pwd`
-
-Install a few WOF-Clone dependencies
-
-    make deps
-
-Which logs which dependencies are being installed:
+The easiest way to install all the dependencies and compile all of the code and command line tools is to use the handy Makefile that is included with this repository, like this:
 
 ```
-go get -u "github.com/whosonfirst/go-whosonfirst-csv"
-go get -u "github.com/whosonfirst/go-whosonfirst-log"
-go get -u "github.com/whosonfirst/go-whosonfirst-pool"
-go get -u "github.com/whosonfirst/go-whosonfirst-utils"
-go get -u "github.com/jeffail/tunny"
+$> cd go-whosonfirst-clone
+$> make deps
+$> make bin
 ```
 
-Compile the wof-clone Go tools to binary:
+In addition to fetching all the necessary dependencies this will clone the `go-whosonfirst-clone` packages in to the `src` directory (along with all the dependencies) which is a thing you need to do because of the way Go expects code to organized. It's kind of weird and annoying but also shouting-at-the-sky territory so the Makefile is designed to hide the bother from you.
 
-```
-make bin
-```
+If you don't have `make` installed on your computer or just want to do things by hand then [you should spend some time reading the Makefile](Makefile) itself. The revelant "targets" (which are the equivalent of commands in Makefile-speak) that you will need are `deps` for fetching dependencies, `self` for cloning files and `bin` for building the command line tools.
 
 ## Usage
 
