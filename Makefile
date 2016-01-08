@@ -6,7 +6,10 @@ self:	prep
 	mkdir -p src/github.com/whosonfirst/go-whosonfirst-clone
 	cp clone.go src/github.com/whosonfirst/go-whosonfirst-clone/
 
-build:	deps fmt bin
+rmdeps:
+	if test -d src; then rm -rf src; fi 
+
+build:	rmdeps deps fmt bin
 
 deps:
 	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-csv"
