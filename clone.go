@@ -163,6 +163,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 
 	if !ok {
 		c.Logger.Warning("failed to process retries")
+		return errors.New("One of file failed to be cloned")
 	}
 
 	return nil
