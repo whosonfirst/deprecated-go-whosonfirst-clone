@@ -2,6 +2,7 @@ package clone
 
 import (
 	"errors"
+	_ "fmt"
 	"github.com/jeffail/tunny"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -38,9 +40,42 @@ type WOFClone struct {
 	done       chan bool
 }
 
-func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *WOFClone {
+func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (*WOFClone, error) {
 
-	cl := &http.Client{}
+	// https://golang.org/src/net/http/filetransport.go
+
+	u, err := url.Parse(source)
+
+	if err != nil {
+		return nil, err
+	}
+
+	var cl *http.Client
+
+	if u.Scheme == "file" {
+
+		root := u.Path
+
+		if !strings.HasSuffix(root, "/") {
+			root = root + "/"
+		}
+
+		// See this:
+		// root = "/"
+		// That's what necessary to make cloning local files work absent
+		// tweaking the code below to see whether we are a "file" source
+		// and modifying the request URL. The fear of blindly opening up
+		// the root level directory on the file system in this context
+		// seems a bit premature (not to mention silly) but measure twice
+		// and all that good stuff... (20160112/thisisaaronland)
+
+		t := &http.Transport{}
+		t.RegisterProtocol("file", http.NewFileTransport(http.Dir(root)))
+
+		cl = &http.Client{Transport: t}
+	} else {
+		cl = &http.Client{}
+	}
 
 	runtime.GOMAXPROCS(procs)
 
@@ -77,7 +112,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 		}
 	}(&c)
 
-	return &c
+	return &c, nil
 }
 
 func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates bool) error {

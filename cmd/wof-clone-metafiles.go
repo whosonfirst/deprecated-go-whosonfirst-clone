@@ -33,7 +33,12 @@ func main() {
 	logger := log.NewWOFLogger("[wof-clone-metafiles] ")
 	logger.AddLogger(writer, *loglevel)
 
-	cl := clone.NewWOFClone(*source, *dest, *procs, logger)
+	cl, err := clone.NewWOFClone(*source, *dest, *procs, logger)
+
+	if err != nil {
+		logger.Error("failed to create new Clone instance, because %v", err)
+		os.Exit(1)
+	}
 
 	for _, file := range args {
 
