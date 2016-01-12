@@ -34,6 +34,7 @@ type WOFClone struct {
 	client     *http.Client
 	retries    *pool.LIFOPool
 	workpool   *tunny.WorkPool
+	timer      time.Time
 }
 
 func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *WOFClone {
@@ -56,12 +57,13 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 		client:     cl,
 		workpool:   workpool,
 		retries:    retries,
+		timer:      time.Now(),
 	}
 
 	return &c
 }
 
-func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
+func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates bool) error {
 
 	abs_path, _ := filepath.Abs(file)
 
@@ -73,6 +75,8 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 	}
 
 	wg := new(sync.WaitGroup)
+
+	c.timer = time.Now()
 
 	for {
 
@@ -103,7 +107,10 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 
 		if !os.IsNotExist(err) {
 
-			if skip_existing {
+			if force_updates {
+
+				c.Logger.Debug("%s already but we are forcing updates", local)
+			} else if skip_existing {
 
 				c.Logger.Debug("%s already exists and we are skipping things that exist", local)
 				carry_on = true
@@ -401,5 +408,9 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 }
 
 func (c *WOFClone) Status() {
-	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d retry: %d goroutines: %d", c.Scheduled, c.Completed, c.Success, c.Error, c.retries.Length(), runtime.NumGoroutine())
+
+	t2 := time.Since(c.timer)
+
+	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d skipped: %d to retry: %d goroutines: %d time: %v",
+		c.Scheduled, c.Completed, c.Success, c.Error, c.Skipped, c.retries.Length(), runtime.NumGoroutine(), t2)
 }

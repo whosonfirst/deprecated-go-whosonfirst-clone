@@ -17,6 +17,7 @@ func main() {
 	var procs = flag.Int("procs", (runtime.NumCPU() * 2), "The number of concurrent processes to clone data with")
 	var loglevel = flag.String("loglevel", "info", "The level of detail for logging")
 	var skip_existing = flag.Bool("skip-existing", false, "Skip existing files on disk (without checking for remote changes)")
+	var force_updates = flag.Bool("force-updates", false, "Force updates to files on disk (without checking for remote changes)")
 	var strict = flag.Bool("strict", false, "Exit (1) if any meta file fails cloning")
 
 	flag.Parse()
@@ -33,7 +34,7 @@ func main() {
 
 	for _, file := range args {
 
-		err := cl.CloneMetaFile(file, *skip_existing)
+		err := cl.CloneMetaFile(file, *skip_existing, *force_updates)
 
 		if err != nil {
 			logger.Error("failed to clone %s, because %v", file, err)
