@@ -2,8 +2,8 @@ package main
 
 import (
 	"flag"
-	clone "github.com/whosonfirst/go-whosonfirst-clone"
-	log "github.com/whosonfirst/go-whosonfirst-log"
+	"github.com/whosonfirst/go-whosonfirst-clone"
+	"github.com/whosonfirst/go-whosonfirst-log"
 	"io"
 	"os"
 	"runtime"
@@ -11,7 +11,13 @@ import (
 
 func main() {
 
-	var source = flag.String("source", "https://whosonfirst.mapzen.com/data/", "Where to look for files")
+	/*
+	   Important see the way 'source' is the fully qualified AWS/S3 path and not whosonfirst.mapzen.com/data?
+	   That's a... thing. The pretty domain results in an endless array of HTTP errors that cascade in to too
+	   many open filehandle errors and table-pounding. Because computers. (20160112/thisisaaronland)
+	*/
+
+	var source = flag.String("source", "https://s3.amazonaws.com/whosonfirst.mapzen.com/data/", "Where to look for files")
 	var dest = flag.String("dest", "", "Where to write files")
 	var procs = flag.Int("procs", (runtime.NumCPU() * 2), "The number of concurrent processes to clone data with")
 	var loglevel = flag.String("loglevel", "info", "The level of detail for logging")
