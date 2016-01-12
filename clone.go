@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type WOFClone struct {
@@ -74,6 +75,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 	wg := new(sync.WaitGroup)
 
 	for {
+
 		row, err := reader.Read()
 
 		if err == io.EOF {
@@ -97,6 +99,8 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 		remote := c.Source + rel_path
 		local := path.Join(c.Dest, rel_path)
 
+		_, err = os.Stat(local)
+
 		if !os.IsNotExist(err) {
 
 			if skip_existing {
@@ -107,6 +111,8 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 			} else {
 
 				file_hash, ok := row["file_hash"]
+
+				t1 := time.Now()
 
 				if ok {
 					c.Logger.Debug("comparing hardcoded hash (%s) for %s", file_hash, local)
@@ -119,6 +125,10 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 					c.Logger.Info("no changes to %s", local)
 					carry_on = true
 				}
+
+				t2 := time.Since(t1)
+
+				c.Logger.Info("time to determine whether %s has changed (%t), %v", local, has_changes, t2)
 			}
 
 			if carry_on {
@@ -135,13 +145,18 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 		wg.Add(1)
 		atomic.AddInt64(&c.Scheduled, 1)
 
-		go func() {
+		go func(c *WOFClone, rel_path string, ensure_changes bool) {
 
 			defer wg.Done()
 
 			_, err = c.workpool.SendWork(func() {
 
+				t1 := time.Now()
 				cl_err := c.ClonePath(rel_path, ensure_changes)
+
+				t2 := time.Since(t1)
+
+				c.Logger.Info("time to process %s : %v", rel_path, t2)
 
 				if cl_err != nil {
 					atomic.AddInt64(&c.Error, 1)
@@ -154,7 +169,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool) error {
 				c.Status()
 			})
 
-		}()
+		}(c, rel_path, ensure_changes)
 	}
 
 	wg.Wait()
@@ -203,7 +218,7 @@ func (c *WOFClone) ProcessRetries() bool {
 			atomic.AddInt64(&c.Scheduled, 1)
 			wg.Add(1)
 
-			go func() {
+			go func(c *WOFClone, rel_path string) {
 
 				defer wg.Done()
 
@@ -211,7 +226,13 @@ func (c *WOFClone) ProcessRetries() bool {
 
 					ensure_changes := true
 
+					t1 := time.Now()
+
 					cl_err := c.ClonePath(rel_path, ensure_changes)
+
+					t2 := time.Since(t1)
+
+					c.Logger.Info("time to retry clone %s : %v\n", rel_path, t2)
 
 					if cl_err != nil {
 						atomic.AddInt64(&c.Error, 1)
@@ -223,7 +244,7 @@ func (c *WOFClone) ProcessRetries() bool {
 					c.Status()
 				})
 
-			}()
+			}(c, rel_path)
 		}
 
 		wg.Wait()
@@ -312,7 +333,13 @@ func (c *WOFClone) Process(remote string, local string) error {
 		os.MkdirAll(local_root, 0755)
 	}
 
+	t1 := time.Now()
+
 	rsp, fetch_err := c.Fetch("GET", remote)
+
+	t2 := time.Since(t1)
+
+	c.Logger.Info("time to fetch %s: %v", remote, t2)
 
 	if fetch_err != nil {
 		return fetch_err
@@ -327,7 +354,7 @@ func (c *WOFClone) Process(remote string, local string) error {
 		return read_err
 	}
 
-	go func() error {
+	go func(local string, contents []byte) error {
 
 		write_err := ioutil.WriteFile(local, contents, 0644)
 
@@ -342,7 +369,7 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 		c.Logger.Debug("Wrote %s to disk", local)
 		return nil
-	}()
+	}(local, contents)
 
 	return nil
 }
