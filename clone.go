@@ -54,23 +54,24 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 
 	if u.Scheme == "file" {
 
-		// See also: https://code.google.com/p/go/issues/detail?id=2113
-
 		root := u.Path
 
 		if !strings.HasSuffix(root, "/") {
 			root = root + "/"
 		}
 
-		// See this:
-		// root = "/"
-		// That's what necessary to make cloning local files work absent
-		// tweaking the code below to see whether we are a "file" source
-		// and modifying the request URL. The fear of blindly opening up
-		// the root level directory on the file system in this context
-		// seems a bit premature (not to mention silly) but measure twice
-		// and all that good stuff... (20160112/thisisaaronland)
-		
+		/*
+			Pay attention to what's going here. Absent tweaking the URL to
+			fetch in the 'Fetch' method the following will not work. In
+			order to make this working *without* tweaking the URL you would
+			need to specifiy the root as '/' which just seems like a bad
+			idea. The fear of blindly opening up the root level directory on
+			the file system in this context may seem a bit premature (not to
+			mention silly) but measure twice and all that good stuff...
+			See also: https://code.google.com/p/go/issues/detail?id=2113
+			(20160112/thisisaaronland)
+		*/
+
 		t := &http.Transport{}
 		t.RegisterProtocol("file", http.NewFileTransport(http.Dir(root)))
 
@@ -389,7 +390,7 @@ func (c *WOFClone) Process(remote string, local string) error {
 	_, err := os.Stat(local_root)
 
 	if os.IsNotExist(err) {
-		c.Logger.Info("create %s", local_root)
+		c.Logger.Debug("create %s", local_root)
 		os.MkdirAll(local_root, 0755)
 	}
 
@@ -436,17 +437,32 @@ func (c *WOFClone) Process(remote string, local string) error {
 	return nil
 }
 
-func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
+func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 
-	c.Logger.Debug("%s %s", method, url)
+	/*
+	  See notes in NewWOFClone for details on what's going on here. Given that
+	  we are already testing whether c.Source is a file URI parsing remote here
+	  is probably a bit of a waste. We will live with the cost for now and optimize
+	  as necessary... (20160112/thisisaaronland)
+	*/
 
-	req, _ := http.NewRequest(method, url, nil)
+	u, _ := url.Parse(remote)
+
+	if u.Scheme == "file" {
+		remote = strings.Replace(remote, c.Source, "", 1)
+		remote = "file:///" + remote
+		c.Logger.Debug("remote is now %s", remote)
+	}
+
+	c.Logger.Debug("%s %s", method, remote)
+
+	req, _ := http.NewRequest(method, remote, nil)
 	req.Close = true
 
 	rsp, err := c.client.Do(req)
 
 	if err != nil {
-		c.Logger.Error("Failed to %s %s, because %v", method, url, err)
+		c.Logger.Error("Failed to %s %s, because %v", method, remote, err)
 		return nil, err
 	}
 
@@ -458,7 +474,7 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 	expected := 200
 
 	if rsp.StatusCode != expected {
-		c.Logger.Error("Failed to %s %s, because we expected %d from source and got '%s' instead", method, url, expected, rsp.Status)
+		c.Logger.Error("Failed to %s %s, because we expected %d from source and got '%s' instead", method, remote, expected, rsp.Status)
 		return nil, errors.New(rsp.Status)
 	}
 
