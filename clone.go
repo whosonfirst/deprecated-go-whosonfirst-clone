@@ -35,6 +35,7 @@ type WOFClone struct {
 	retries    *pool.LIFOPool
 	workpool   *tunny.WorkPool
 	timer      time.Time
+	done       chan bool
 }
 
 func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *WOFClone {
@@ -45,6 +46,8 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 
 	workpool, _ := tunny.CreatePoolGeneric(procs).Open()
 	retries := pool.NewLIFOPool()
+
+	ch := make(chan bool)
 
 	c := WOFClone{
 		Success:    0,
@@ -58,7 +61,21 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) *
 		workpool:   workpool,
 		retries:    retries,
 		timer:      time.Now(),
+		done:       ch,
 	}
+
+	go func(c *WOFClone) {
+
+		for {
+			select {
+
+			case <-c.done:
+				break
+			case <-time.After(1 * time.Second):
+				c.Status()
+			}
+		}
+	}(&c)
 
 	return &c
 }
@@ -135,7 +152,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 
 				t2 := time.Since(t1)
 
-				c.Logger.Info("time to determine whether %s has changed (%t), %v", local, has_changes, t2)
+				c.Logger.Debug("time to determine whether %s has changed (%t), %v", local, has_changes, t2)
 			}
 
 			if carry_on {
@@ -163,7 +180,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 
 				t2 := time.Since(t1)
 
-				c.Logger.Info("time to process %s : %v", rel_path, t2)
+				c.Logger.Debug("time to process %s : %v", rel_path, t2)
 
 				if cl_err != nil {
 					atomic.AddInt64(&c.Error, 1)
@@ -173,7 +190,6 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 				}
 
 				atomic.AddInt64(&c.Completed, 1)
-				c.Status()
 			})
 
 		}(c, rel_path, ensure_changes)
@@ -239,7 +255,7 @@ func (c *WOFClone) ProcessRetries() bool {
 
 					t2 := time.Since(t1)
 
-					c.Logger.Info("time to retry clone %s : %v\n", rel_path, t2)
+					c.Logger.Debug("time to retry clone %s : %v\n", rel_path, t2)
 
 					if cl_err != nil {
 						atomic.AddInt64(&c.Error, 1)
@@ -248,7 +264,6 @@ func (c *WOFClone) ProcessRetries() bool {
 					}
 
 					atomic.AddInt64(&c.Completed, 1)
-					c.Status()
 				})
 
 			}(c, rel_path)
@@ -315,7 +330,8 @@ func (c *WOFClone) HasHashChanged(local_hash string, remote string) (bool, error
 		return change, err
 	}
 
-	defer rsp.Body.Close()
+	rsp.Body.Close()
+	// defer rsp.Body.Close()
 
 	etag := rsp.Header.Get("Etag")
 	remote_hash := strings.Replace(etag, "\"", "", -1)
@@ -346,13 +362,13 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 	t2 := time.Since(t1)
 
-	c.Logger.Info("time to fetch %s: %v", remote, t2)
+	c.Logger.Debug("time to fetch %s: %v", remote, t2)
 
 	if fetch_err != nil {
 		return fetch_err
 	}
 
-	defer rsp.Body.Close()
+	// defer rsp.Body.Close()
 
 	contents, read_err := ioutil.ReadAll(rsp.Body)
 
@@ -360,6 +376,8 @@ func (c *WOFClone) Process(remote string, local string) error {
 		c.Logger.Error("failed to read body for %s, because %v", remote, read_err)
 		return read_err
 	}
+
+	rsp.Body.Close()
 
 	go func(local string, contents []byte) error {
 
@@ -394,6 +412,9 @@ func (c *WOFClone) Fetch(method string, url string) (*http.Response, error) {
 		c.Logger.Error("Failed to %s %s, because %v", method, url, err)
 		return nil, err
 	}
+
+	// Notice how we are not closing rsp.Body - that's because we are passing
+	// it (rsp) back up the stack
 
 	// See also: https://github.com/whosonfirst/go-whosonfirst-clone/issues/6
 

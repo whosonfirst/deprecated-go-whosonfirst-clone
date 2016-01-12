@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"time"
 )
 
 func main() {
@@ -30,8 +29,6 @@ func main() {
 
 	cl := clone.NewWOFClone(*source, *dest, *procs, logger)
 
-	start := time.Now()
-
 	for _, file := range args {
 
 		err := cl.CloneMetaFile(file, *skip_existing, *force_updates)
@@ -45,9 +42,6 @@ func main() {
 		}
 	}
 
-	since := time.Since(start)
-	secs := float64(since) / 1e9
-
-	logger.Info("processed %d files (ok: %d error: %d skipped: %d) in %f seconds\n", cl.Scheduled, cl.Success, cl.Error, cl.Skipped, secs)
+	cl.Status()
 	os.Exit(0)
 }
