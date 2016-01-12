@@ -54,6 +54,8 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 
 	if u.Scheme == "file" {
 
+		// See also: https://code.google.com/p/go/issues/detail?id=2113
+
 		root := u.Path
 
 		if !strings.HasSuffix(root, "/") {
@@ -68,7 +70,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 		// the root level directory on the file system in this context
 		// seems a bit premature (not to mention silly) but measure twice
 		// and all that good stuff... (20160112/thisisaaronland)
-
+		
 		t := &http.Transport{}
 		t.RegisterProtocol("file", http.NewFileTransport(http.Dir(root)))
 
