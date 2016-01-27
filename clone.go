@@ -417,22 +417,34 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 	rsp.Body.Close()
 
-	go func(local string, contents []byte) error {
+	/*
 
-		write_err := ioutil.WriteFile(local, contents, 0644)
+		Sudo please make me happen asynchronously again but sort out how
+		to communicate these things back to the main thread so that it can
+		block exiting before all the relevant threads have finished writing.
+		Normally this would not be an issue because we're dealing with tiny
+		files but this dynamic (not waiting for writes to complete) was pre-
+		venting New Zealand from being included in the wof-country bundle.
+		So for now, you know, whatEVAR. Good times... (20160127/thisisaaronland)
 
-		if write_err != nil {
-			c.Logger.Error("Failed to write %s, because %v", local, write_err)
+	*/
 
-			atomic.AddInt64(&c.Success, -1)
-			atomic.AddInt64(&c.Error, 1)
+	// go func(local string, contents []byte) error {
 
-			return write_err
-		}
+	write_err := ioutil.WriteFile(local, contents, 0644)
 
-		c.Logger.Debug("Wrote %s to disk", local)
-		return nil
-	}(local, contents)
+	if write_err != nil {
+		c.Logger.Error("Failed to write %s, because %v", local, write_err)
+
+		atomic.AddInt64(&c.Success, -1)
+		atomic.AddInt64(&c.Error, 1)
+
+		return write_err
+	}
+
+	c.Logger.Debug("Wrote %s to disk", local)
+	return nil
+	// }(local, contents)
 
 	return nil
 }
