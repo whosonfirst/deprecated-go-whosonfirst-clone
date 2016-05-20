@@ -122,7 +122,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 
 	abs_path, _ := filepath.Abs(file)
 
-	reader, read_err := csv.NewDictReader(abs_path)
+	reader, read_err := csv.NewDictReaderFromPath(abs_path)
 
 	if read_err != nil {
 		c.Logger.Error("Failed to read %s, because %v", abs_path, read_err)
