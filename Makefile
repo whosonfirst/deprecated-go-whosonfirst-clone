@@ -12,7 +12,7 @@ self:	prep
 rmdeps:
 	if test -d src; then rm -rf src; fi 
 
-build:	fmt bin
+build:	rmdeps bin
 
 deps:
 	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-csv"

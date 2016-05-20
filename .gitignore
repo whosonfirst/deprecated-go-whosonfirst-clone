@@ -1,4 +1,5 @@
 *~
 pkg
-src
 clone
+src
+!vendor/src
