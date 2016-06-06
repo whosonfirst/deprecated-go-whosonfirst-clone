@@ -36,6 +36,7 @@ type WOFClone struct {
 	client     *http.Client
 	retries    *pool.LIFOPool
 	workpool   *tunny.WorkPool
+	writesync  *sync.WaitGroup
 	timer      time.Time
 	done       chan bool
 }
@@ -85,6 +86,16 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 	workpool, _ := tunny.CreatePoolGeneric(procs).Open()
 	retries := pool.NewLIFOPool()
 
+	/*
+
+		This gets triggered in the 'Process' function to ensure that
+		we don't exit out of 'CloneMetaFile' before all the goroutines
+		to write new files to disk actually finish ... you know, writing
+		to disk (20160606/thisisaaronland)
+	*/
+
+	writesync := new(sync.WaitGroup)
+
 	ch := make(chan bool)
 
 	c := WOFClone{
@@ -97,6 +108,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 		MaxRetries: 25.0, // maybe allow this to be user-defined ?
 		client:     cl,
 		workpool:   workpool,
+		writesync:  writesync,
 		retries:    retries,
 		timer:      time.Now(),
 		done:       ch,
@@ -215,7 +227,6 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 
 				t1 := time.Now()
 				cl_err := c.ClonePath(rel_path, ensure_changes)
-
 				t2 := time.Since(t1)
 
 				c.Logger.Debug("time to process %s : %v", rel_path, t2)
@@ -235,12 +246,16 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 
 	wg.Wait()
 
+	c.writesync.Wait()
+
 	ok := c.ProcessRetries()
 
 	if !ok {
 		c.Logger.Warning("failed to process retries")
 		return errors.New("One of file failed to be cloned")
 	}
+
+	c.writesync.Wait()
 
 	return nil
 }
@@ -406,8 +421,6 @@ func (c *WOFClone) Process(remote string, local string) error {
 		return fetch_err
 	}
 
-	// defer rsp.Body.Close()
-
 	contents, read_err := ioutil.ReadAll(rsp.Body)
 
 	if read_err != nil {
@@ -417,34 +430,27 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 	rsp.Body.Close()
 
-	/*
+	c.writesync.Add(1) // See notes above in 'NewWOFClone'
 
-		Sudo please make me happen asynchronously again but sort out how
-		to communicate these things back to the main thread so that it can
-		block exiting before all the relevant threads have finished writing.
-		Normally this would not be an issue because we're dealing with tiny
-		files but this dynamic (not waiting for writes to complete) was pre-
-		venting New Zealand from being included in the wof-country bundle.
-		So for now, you know, whatEVAR. Good times... (20160127/thisisaaronland)
+	go func(writesync *sync.WaitGroup, local string, contents []byte) error {
 
-	*/
+		defer writesync.Done()
 
-	// go func(local string, contents []byte) error {
+		write_err := ioutil.WriteFile(local, contents, 0644)
 
-	write_err := ioutil.WriteFile(local, contents, 0644)
+		if write_err != nil {
+			c.Logger.Error("Failed to write %s, because %v", local, write_err)
 
-	if write_err != nil {
-		c.Logger.Error("Failed to write %s, because %v", local, write_err)
+			atomic.AddInt64(&c.Success, -1)
+			atomic.AddInt64(&c.Error, 1)
 
-		atomic.AddInt64(&c.Success, -1)
-		atomic.AddInt64(&c.Error, 1)
+			return write_err
+		}
 
-		return write_err
-	}
+		c.Logger.Debug("Wrote %s to disk", local)
+		return nil
 
-	c.Logger.Debug("Wrote %s to disk", local)
-	return nil
-	// }(local, contents)
+	}(c.writesync, local, contents)
 
 	return nil
 }
