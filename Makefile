@@ -24,7 +24,7 @@ deps:
 bin:	self
 	@GOPATH=$(GOPATH) go build -o bin/wof-clone-metafiles cmd/wof-clone-metafiles.go
 
-vendor: rmdeps deps
+vendor-deps: rmdeps deps
 	if test -d vendor/src; then rm -rf vendor/src; fi
 	cp -r src vendor/src
 	find vendor -name '.git' -print -type d -exec rm -rf {} +
