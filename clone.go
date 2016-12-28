@@ -219,11 +219,29 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 		wg.Add(1)
 		atomic.AddInt64(&c.Scheduled, 1)
 
+		count := 1000
+		throttle := make(chan bool, count)
+
+		for i := 0; i < count; i++ {
+
+			throttle <- true
+		}
+
 		go func(c *WOFClone, rel_path string, ensure_changes bool) {
 
-			defer wg.Done()
+			<- throttle
 
-			_, err = c.workpool.SendWork(func() {
+			defer func(){
+				throttle <- true
+				wg.Done()
+			}()
+
+			// _, err = c.workpool.SendWork(func() {
+
+
+				defer func() {
+
+				}()
 
 				t1 := time.Now()
 				cl_err := c.ClonePath(rel_path, ensure_changes)
@@ -239,7 +257,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 				}
 
 				atomic.AddInt64(&c.Completed, 1)
-			})
+			// })
 
 		}(c, rel_path, ensure_changes)
 	}
@@ -384,7 +402,6 @@ func (c *WOFClone) HasHashChanged(local_hash string, remote string) (bool, error
 	}
 
 	rsp.Body.Close()
-	// defer rsp.Body.Close()
 
 	etag := rsp.Header.Get("Etag")
 	remote_hash := strings.Replace(etag, "\"", "", -1)
@@ -421,14 +438,14 @@ func (c *WOFClone) Process(remote string, local string) error {
 		return fetch_err
 	}
 
+	defer rsp.Body.Close()
+
 	contents, read_err := ioutil.ReadAll(rsp.Body)
 
 	if read_err != nil {
 		c.Logger.Error("failed to read body for %s, because %v", remote, read_err)
 		return read_err
 	}
-
-	rsp.Body.Close()
 
 	c.writesync.Add(1) // See notes above in 'NewWOFClone'
 
@@ -503,6 +520,14 @@ func (c *WOFClone) Status() {
 
 	t2 := time.Since(c.timer)
 
+	// https://deferpanic.com/blog/understanding-golang-memory-usage/
+	// https://golang.org/pkg/runtime/#MemStats
+	
+	var mem runtime.MemStats
+        runtime.ReadMemStats(&mem)
+
 	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d skipped: %d to retry: %d goroutines: %d time: %v",
 		c.Scheduled, c.Completed, c.Success, c.Error, c.Skipped, c.retries.Length(), runtime.NumGoroutine(), t2)
+
+	c.Logger.Info("memstats // alloc: %d total alloc: %d heap alloc: %d heap size: %d", mem.Alloc, mem.TotalAlloc, mem.HeapAlloc, mem.HeapSys)				
 }
