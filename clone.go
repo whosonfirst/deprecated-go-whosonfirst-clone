@@ -3,7 +3,6 @@ package clone
 import (
 	"errors"
 	_ "fmt"
-	"github.com/jeffail/tunny"
 	csv "github.com/whosonfirst/go-whosonfirst-csv"
 	log "github.com/whosonfirst/go-whosonfirst-log"
 	pool "github.com/whosonfirst/go-whosonfirst-pool"
@@ -35,10 +34,10 @@ type WOFClone struct {
 	Logger     *log.WOFLogger
 	client     *http.Client
 	retries    *pool.LIFOPool
-	workpool   *tunny.WorkPool
 	writesync  *sync.WaitGroup
 	timer      time.Time
 	done       chan bool
+	throttle   chan bool
 }
 
 func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (*WOFClone, error) {
@@ -83,7 +82,13 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 
 	runtime.GOMAXPROCS(procs)
 
-	workpool, _ := tunny.CreatePoolGeneric(procs).Open()
+	count := int((procs * 1000) / 2)
+	throttle := make(chan bool, count)
+
+	for i := 0; i < count; i++ {
+		throttle <- true
+	}
+
 	retries := pool.NewLIFOPool()
 
 	/*
@@ -107,11 +112,11 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 		Logger:     logger,
 		MaxRetries: 25.0, // maybe allow this to be user-defined ?
 		client:     cl,
-		workpool:   workpool,
 		writesync:  writesync,
 		retries:    retries,
 		timer:      time.Now(),
 		done:       ch,
+		throttle:   throttle,
 	}
 
 	go func(c *WOFClone) {
@@ -216,48 +221,32 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 			ensure_changes = false
 		}
 
+		<-c.throttle
+
 		wg.Add(1)
 		atomic.AddInt64(&c.Scheduled, 1)
 
-		count := 1000
-		throttle := make(chan bool, count)
-
-		for i := 0; i < count; i++ {
-
-			throttle <- true
-		}
-
 		go func(c *WOFClone, rel_path string, ensure_changes bool) {
 
-			<- throttle
-
-			defer func(){
-				throttle <- true
+			defer func() {
+				c.throttle <- true
 				wg.Done()
 			}()
 
-			// _, err = c.workpool.SendWork(func() {
+			t1 := time.Now()
+			cl_err := c.ClonePath(rel_path, ensure_changes)
+			t2 := time.Since(t1)
 
+			c.Logger.Debug("time to process %s : %v", rel_path, t2)
 
-				defer func() {
+			if cl_err != nil {
+				atomic.AddInt64(&c.Error, 1)
+				c.retries.Push(&pool.PoolString{String: rel_path})
+			} else {
+				atomic.AddInt64(&c.Success, 1)
+			}
 
-				}()
-
-				t1 := time.Now()
-				cl_err := c.ClonePath(rel_path, ensure_changes)
-				t2 := time.Since(t1)
-
-				c.Logger.Debug("time to process %s : %v", rel_path, t2)
-
-				if cl_err != nil {
-					atomic.AddInt64(&c.Error, 1)
-					c.retries.Push(&pool.PoolString{String: rel_path})
-				} else {
-					atomic.AddInt64(&c.Success, 1)
-				}
-
-				atomic.AddInt64(&c.Completed, 1)
-			// })
+			atomic.AddInt64(&c.Completed, 1)
 
 		}(c, rel_path, ensure_changes)
 	}
@@ -309,33 +298,35 @@ func (c *WOFClone) ProcessRetries() bool {
 
 			rel_path := r.StringValue()
 
+			<-c.throttle
+
 			atomic.AddInt64(&c.Scheduled, 1)
 			wg.Add(1)
 
 			go func(c *WOFClone, rel_path string) {
 
-				defer wg.Done()
+				defer func() {
+					wg.Done()
+					c.throttle <- true
+				}()
 
-				c.workpool.SendWork(func() {
+				ensure_changes := true
 
-					ensure_changes := true
+				t1 := time.Now()
 
-					t1 := time.Now()
+				cl_err := c.ClonePath(rel_path, ensure_changes)
 
-					cl_err := c.ClonePath(rel_path, ensure_changes)
+				t2 := time.Since(t1)
 
-					t2 := time.Since(t1)
+				c.Logger.Debug("time to retry clone %s : %v\n", rel_path, t2)
 
-					c.Logger.Debug("time to retry clone %s : %v\n", rel_path, t2)
+				if cl_err != nil {
+					atomic.AddInt64(&c.Error, 1)
+				} else {
+					atomic.AddInt64(&c.Error, -1)
+				}
 
-					if cl_err != nil {
-						atomic.AddInt64(&c.Error, 1)
-					} else {
-						atomic.AddInt64(&c.Error, -1)
-					}
-
-					atomic.AddInt64(&c.Completed, 1)
-				})
+				atomic.AddInt64(&c.Completed, 1)
 
 			}(c, rel_path)
 		}
@@ -520,14 +511,14 @@ func (c *WOFClone) Status() {
 
 	t2 := time.Since(c.timer)
 
-	// https://deferpanic.com/blog/understanding-golang-memory-usage/
-	// https://golang.org/pkg/runtime/#MemStats
-	
-	var mem runtime.MemStats
-        runtime.ReadMemStats(&mem)
-
 	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d skipped: %d to retry: %d goroutines: %d time: %v",
 		c.Scheduled, c.Completed, c.Success, c.Error, c.Skipped, c.retries.Length(), runtime.NumGoroutine(), t2)
 
-	c.Logger.Info("memstats // alloc: %d total alloc: %d heap alloc: %d heap size: %d", mem.Alloc, mem.TotalAlloc, mem.HeapAlloc, mem.HeapSys)				
+	// https://deferpanic.com/blog/understanding-golang-memory-usage/
+	// https://golang.org/pkg/runtime/#MemStats
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	c.Logger.Debug("memstats: alloc: %d total alloc: %d heap alloc: %d heap size: %d", mem.Alloc, mem.TotalAlloc, mem.HeapAlloc, mem.HeapSys)
 }
