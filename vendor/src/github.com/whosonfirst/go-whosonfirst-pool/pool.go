@@ -39,36 +39,52 @@ func (s PoolString) IntValue() int64 {
 
 // https://github.com/SimonWaldherr/golang-examples/blob/2be89f3185aded00740a45a64e3c98855193b948/advanced/lifo.go
 
-func NewLIFOPool() *LIFOPool {
-	return &LIFOPool{mutex: &sync.Mutex{}}
-}
-
 type LIFOPool struct {
 	nodes []PoolItem
 	count int64
 	mutex *sync.Mutex
 }
 
+func NewLIFOPool() *LIFOPool {
+
+	mu := new(sync.Mutex)
+	nodes := make([]PoolItem, 0)
+
+	return &LIFOPool{
+		mutex: mu,
+		nodes: nodes,
+		count: 0,
+	}
+}
+
 func (pl *LIFOPool) Length() int64 {
+
+	pl.mutex.Lock()
+	defer pl.mutex.Unlock()
+
 	return pl.count
 }
 
 func (pl *LIFOPool) Push(i PoolItem) {
+
+	pl.mutex.Lock()
+	defer pl.mutex.Unlock()
+
 	pl.nodes = append(pl.nodes[:pl.count], i)
 	atomic.AddInt64(&pl.count, 1)
 }
 
 func (pl *LIFOPool) Pop() (PoolItem, bool) {
 
+	pl.mutex.Lock()
+	defer pl.mutex.Unlock()
+
 	if pl.count == 0 {
 		return nil, false
 	}
 
-	pl.mutex.Lock()
-
 	atomic.AddInt64(&pl.count, -1)
 	i := pl.nodes[pl.count]
 
-	pl.mutex.Unlock()
 	return i, true
 }

@@ -82,7 +82,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 
 	runtime.GOMAXPROCS(procs)
 
-	count := int((procs * 1000) / 2)
+	count := 1000 // int((procs * 1000) / 2)
 	throttle := make(chan bool, count)
 
 	for i := 0; i < count; i++ {
@@ -293,6 +293,13 @@ func (c *WOFClone) ProcessRetries() bool {
 
 			if !ok {
 				c.Logger.Error("failed to pop retries because... computers?")
+				break
+			}
+
+			c.Logger.Info("POPPED THING IS A %s (%v)", r, r)
+
+			if r == nil {
+				c.Logger.Error("why is 'r' a nil?")
 				break
 			}
 

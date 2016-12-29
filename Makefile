@@ -19,7 +19,6 @@ deps:
 	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-log"
 	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-pool"
 	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-utils"
-	@GOPATH=$(shell pwd) go get -u "github.com/jeffail/tunny"
 
 bin:	self
 	@GOPATH=$(GOPATH) go build -o bin/wof-clone-metafiles cmd/wof-clone-metafiles.go
