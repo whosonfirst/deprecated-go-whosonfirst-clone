@@ -264,6 +264,7 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 
 	c.writesync.Wait()
 
+	c.done <- true
 	return nil
 }
 
@@ -296,10 +297,8 @@ func (c *WOFClone) ProcessRetries() bool {
 				break
 			}
 
-			c.Logger.Info("POPPED THING IS A %s (%v)", r, r)
-
 			if r == nil {
-				c.Logger.Error("why is 'r' a nil?")
+				c.Logger.Error("why is retry (pool) item nil?")
 				break
 			}
 
@@ -379,6 +378,8 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
 
+	// OPEN FH
+
 	local_hash, err := utils.HashFile(local)
 
 	if err != nil {
@@ -438,6 +439,8 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 	defer rsp.Body.Close()
 
+	// OPEN FH
+
 	contents, read_err := ioutil.ReadAll(rsp.Body)
 
 	if read_err != nil {
@@ -450,6 +453,8 @@ func (c *WOFClone) Process(remote string, local string) error {
 	go func(writesync *sync.WaitGroup, local string, contents []byte) error {
 
 		defer writesync.Done()
+
+		// OPEN FH
 
 		write_err := ioutil.WriteFile(local, contents, 0644)
 
@@ -491,6 +496,8 @@ func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 
 	req, _ := http.NewRequest(method, remote, nil)
 	req.Close = true
+
+	// OPEN FH
 
 	rsp, err := c.client.Do(req)
 
