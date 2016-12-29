@@ -29,6 +29,7 @@ type WOFClone struct {
 	Skipped    int64
 	Scheduled  int64
 	Completed  int64
+	Filehandles int64
 	MaxRetries float64 // max percentage of errors over scheduled
 	Failed     []string
 	Logger     *log.WOFLogger
@@ -82,7 +83,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 
 	runtime.GOMAXPROCS(procs)
 
-	count := 1000 // int((procs * 1000) / 2)
+	count := int((procs * 1000) / 2)
 	throttle := make(chan bool, count)
 
 	for i := 0; i < count; i++ {
@@ -107,6 +108,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 		Success:    0,
 		Error:      0,
 		Skipped:    0,
+		Filehandles: 0,
 		Source:     source,
 		Dest:       dest,
 		Logger:     logger,
@@ -380,10 +382,14 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	// OPEN FH
 
+	atomic.AddInt64(&c.Filehandles, 1)
+	defer atomic.AddInt64(&c.Filehandles, -1)
+
 	local_hash, err := utils.HashFile(local)
 
 	if err != nil {
 		c.Logger.Error("Failed to hash %s, becase %v", local, err)
+		c.Logger.Error("NUM FILE HANDLES IS %d", c.Filehandles)
 		return change, err
 	}
 
@@ -441,6 +447,9 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 	// OPEN FH
 
+	atomic.AddInt64(&c.Filehandles, 1)
+	defer atomic.AddInt64(&c.Filehandles, -1)
+
 	contents, read_err := ioutil.ReadAll(rsp.Body)
 
 	if read_err != nil {
@@ -456,11 +465,14 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 		// OPEN FH
 
+		atomic.AddInt64(&c.Filehandles, 1)
+		defer atomic.AddInt64(&c.Filehandles, -1)
+
 		write_err := ioutil.WriteFile(local, contents, 0644)
 
 		if write_err != nil {
 			c.Logger.Error("Failed to write %s, because %v", local, write_err)
-
+			c.Logger.Error("NUM FILE HANDLES IS %d", c.Filehandles)
 			atomic.AddInt64(&c.Success, -1)
 			atomic.AddInt64(&c.Error, 1)
 
@@ -499,10 +511,14 @@ func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 
 	// OPEN FH
 
+	atomic.AddInt64(&c.Filehandles, 1)
+	defer atomic.AddInt64(&c.Filehandles, -1)
+
 	rsp, err := c.client.Do(req)
 
 	if err != nil {
 		c.Logger.Error("Failed to %s %s, because %v", method, remote, err)
+		c.Logger.Error("NUM FILE HANDLES IS %d", c.Filehandles)
 		return nil, err
 	}
 
@@ -514,6 +530,9 @@ func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 	expected := 200
 
 	if rsp.StatusCode != expected {
+
+		rsp.Body.Close()
+
 		c.Logger.Error("Failed to %s %s, because we expected %d from source and got '%s' instead", method, remote, expected, rsp.Status)
 		return nil, errors.New(rsp.Status)
 	}
@@ -525,8 +544,8 @@ func (c *WOFClone) Status() {
 
 	t2 := time.Since(c.timer)
 
-	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d skipped: %d to retry: %d goroutines: %d time: %v",
-		c.Scheduled, c.Completed, c.Success, c.Error, c.Skipped, c.retries.Length(), runtime.NumGoroutine(), t2)
+	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d skipped: %d to retry: %d goroutines: %d filehandles: %d time: %v",
+		c.Scheduled, c.Completed, c.Success, c.Error, c.Skipped, c.retries.Length(), runtime.NumGoroutine(), c.Filehandles, t2)
 
 	// https://deferpanic.com/blog/understanding-golang-memory-usage/
 	// https://golang.org/pkg/runtime/#MemStats
