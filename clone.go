@@ -110,7 +110,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 		Error:          0,
 		Skipped:        0,
 		Filehandles:    0,
-		MaxFilehandles: 0,
+		MaxFilehandles: 1024,
 		Source:         source,
 		Dest:           dest,
 		Logger:         logger,
@@ -278,7 +278,9 @@ func (c *WOFClone) ProcessRetries() bool {
 
 	if to_retry > 0 {
 
-		scheduled_f := float64(c.Scheduled)
+		scheduled := atomic.LoadInt64(&c.Scheduled)
+		scheduled_f := float64(scheduled)
+
 		retry_f := float64(to_retry)
 
 		pct := (retry_f / scheduled_f) * 100.0
@@ -408,10 +410,6 @@ func (c *WOFClone) HasHashChanged(local_hash string, remote string) (bool, error
 
 	rsp, err := c.Fetch("HEAD", remote)
 
-	defer func() {
-		atomic.AddInt64(&c.Filehandles, -1)
-	}()
-
 	if err != nil {
 		return change, err
 	}
@@ -443,12 +441,6 @@ func (c *WOFClone) Process(remote string, local string) error {
 		os.MkdirAll(local_root, 0755)
 	}
 
-	// OPEN FH
-
-	c.EnsureFilehandles()
-
-	atomic.AddInt64(&c.Filehandles, 1)
-
 	t1 := time.Now()
 
 	rsp, fetch_err := c.Fetch("GET", remote)
@@ -457,16 +449,11 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 	c.Logger.Debug("time to fetch %s: %v", remote, t2)
 
-	defer func() {
-		atomic.AddInt64(&c.Filehandles, -1)
-	}()
-
 	if fetch_err != nil {
 		return fetch_err
 	}
 
 	defer func() {
-		atomic.AddInt64(&c.Filehandles, -1)
 		rsp.Body.Close()
 	}()
 
@@ -542,10 +529,9 @@ func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 
 	rsp, err := c.client.Do(req)
 
-	if err != nil {
+	atomic.AddInt64(&c.Filehandles, -1)
 
-		// Because the filehandle is not closed yet (see below)
-		atomic.AddInt64(&c.Filehandles, -1)
+	if err != nil {
 
 		c.Logger.Error("Failed to %s %s, because %v", method, remote, err)
 
@@ -565,7 +551,6 @@ func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 
 	if rsp.StatusCode != expected {
 
-		atomic.AddInt64(&c.Filehandles, -1)
 		rsp.Body.Close()
 
 		c.Logger.Error("Failed to %s %s, because we expected %d from source and got '%s' instead", method, remote, expected, rsp.Status)
