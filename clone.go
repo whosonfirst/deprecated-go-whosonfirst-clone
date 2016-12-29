@@ -22,23 +22,24 @@ import (
 )
 
 type WOFClone struct {
-	Source     string
-	Dest       string
-	Success    int64
-	Error      int64
-	Skipped    int64
-	Scheduled  int64
-	Completed  int64
-	Filehandles int64
-	MaxRetries float64 // max percentage of errors over scheduled
-	Failed     []string
-	Logger     *log.WOFLogger
-	client     *http.Client
-	retries    *pool.LIFOPool
-	writesync  *sync.WaitGroup
-	timer      time.Time
-	done       chan bool
-	throttle   chan bool
+	Source         string
+	Dest           string
+	Success        int64
+	Error          int64
+	Skipped        int64
+	Scheduled      int64
+	Completed      int64
+	MaxFilehandles int64
+	Filehandles    int64
+	MaxRetries     float64 // max percentage of errors over scheduled
+	Failed         []string
+	Logger         *log.WOFLogger
+	client         *http.Client
+	retries        *pool.LIFOPool
+	writesync      *sync.WaitGroup
+	timer          time.Time
+	done           chan bool
+	throttle       chan bool
 }
 
 func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (*WOFClone, error) {
@@ -105,20 +106,21 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 	ch := make(chan bool)
 
 	c := WOFClone{
-		Success:    0,
-		Error:      0,
-		Skipped:    0,
-		Filehandles: 0,
-		Source:     source,
-		Dest:       dest,
-		Logger:     logger,
-		MaxRetries: 25.0, // maybe allow this to be user-defined ?
-		client:     cl,
-		writesync:  writesync,
-		retries:    retries,
-		timer:      time.Now(),
-		done:       ch,
-		throttle:   throttle,
+		Success:        0,
+		Error:          0,
+		Skipped:        0,
+		Filehandles:    0,
+		MaxFilehandles: 0,
+		Source:         source,
+		Dest:           dest,
+		Logger:         logger,
+		MaxRetries:     25.0, // maybe allow this to be user-defined ?
+		client:         cl,
+		writesync:      writesync,
+		retries:        retries,
+		timer:          time.Now(),
+		done:           ch,
+		throttle:       throttle,
 	}
 
 	go func(c *WOFClone) {
@@ -380,16 +382,20 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
 
+	c.EnsureFilehandles()
+
 	// OPEN FH
 
 	atomic.AddInt64(&c.Filehandles, 1)
-	defer atomic.AddInt64(&c.Filehandles, -1)
 
 	local_hash, err := utils.HashFile(local)
 
+	atomic.AddInt64(&c.Filehandles, -1)
+
 	if err != nil {
 		c.Logger.Error("Failed to hash %s, becase %v", local, err)
-		c.Logger.Error("NUM FILE HANDLES IS %d", c.Filehandles)
+
+		c.SetMaxFilehandles()
 		return change, err
 	}
 
@@ -402,11 +408,17 @@ func (c *WOFClone) HasHashChanged(local_hash string, remote string) (bool, error
 
 	rsp, err := c.Fetch("HEAD", remote)
 
+	defer func() {
+		atomic.AddInt64(&c.Filehandles, -1)
+	}()
+
 	if err != nil {
 		return change, err
 	}
 
-	rsp.Body.Close()
+	defer func() {
+		rsp.Body.Close()
+	}()
 
 	etag := rsp.Header.Get("Etag")
 	remote_hash := strings.Replace(etag, "\"", "", -1)
@@ -431,6 +443,12 @@ func (c *WOFClone) Process(remote string, local string) error {
 		os.MkdirAll(local_root, 0755)
 	}
 
+	// OPEN FH
+
+	c.EnsureFilehandles()
+
+	atomic.AddInt64(&c.Filehandles, 1)
+
 	t1 := time.Now()
 
 	rsp, fetch_err := c.Fetch("GET", remote)
@@ -439,16 +457,18 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 	c.Logger.Debug("time to fetch %s: %v", remote, t2)
 
+	defer func() {
+		atomic.AddInt64(&c.Filehandles, -1)
+	}()
+
 	if fetch_err != nil {
 		return fetch_err
 	}
 
-	defer rsp.Body.Close()
-
-	// OPEN FH
-
-	atomic.AddInt64(&c.Filehandles, 1)
-	defer atomic.AddInt64(&c.Filehandles, -1)
+	defer func() {
+		atomic.AddInt64(&c.Filehandles, -1)
+		rsp.Body.Close()
+	}()
 
 	contents, read_err := ioutil.ReadAll(rsp.Body)
 
@@ -465,14 +485,19 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 		// OPEN FH
 
+		c.EnsureFilehandles()
+
 		atomic.AddInt64(&c.Filehandles, 1)
-		defer atomic.AddInt64(&c.Filehandles, -1)
 
 		write_err := ioutil.WriteFile(local, contents, 0644)
 
+		atomic.AddInt64(&c.Filehandles, -1)
+
 		if write_err != nil {
+
 			c.Logger.Error("Failed to write %s, because %v", local, write_err)
-			c.Logger.Error("NUM FILE HANDLES IS %d", c.Filehandles)
+			c.SetMaxFilehandles()
+
 			atomic.AddInt64(&c.Success, -1)
 			atomic.AddInt64(&c.Error, 1)
 
@@ -511,14 +536,23 @@ func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 
 	// OPEN FH
 
+	c.EnsureFilehandles()
+
 	atomic.AddInt64(&c.Filehandles, 1)
-	defer atomic.AddInt64(&c.Filehandles, -1)
 
 	rsp, err := c.client.Do(req)
 
 	if err != nil {
+
+		// Because the filehandle is not closed yet (see below)
+		atomic.AddInt64(&c.Filehandles, -1)
+
 		c.Logger.Error("Failed to %s %s, because %v", method, remote, err)
-		c.Logger.Error("NUM FILE HANDLES IS %d", c.Filehandles)
+
+		if u.Scheme == "file" {
+			c.SetMaxFilehandles()
+		}
+
 		return nil, err
 	}
 
@@ -531,21 +565,78 @@ func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 
 	if rsp.StatusCode != expected {
 
+		atomic.AddInt64(&c.Filehandles, -1)
 		rsp.Body.Close()
 
 		c.Logger.Error("Failed to %s %s, because we expected %d from source and got '%s' instead", method, remote, expected, rsp.Status)
+
+		if u.Scheme == "file" {
+			c.SetMaxFilehandles()
+		}
+
 		return nil, errors.New(rsp.Status)
 	}
 
 	return rsp, nil
 }
 
+func (c *WOFClone) SetMaxFilehandles() {
+
+	// c.fh.Lock()
+	// defer c.fh.Unlock()
+
+	count := atomic.LoadInt64(&c.Filehandles)
+	max := int64(float64(count) * 0.75)
+
+	atomic.StoreInt64(&c.MaxFilehandles, max)
+
+	c.Logger.Info("Set max filehandles to %d (triggered at %d)", max, count)
+}
+
+func (c *WOFClone) EnsureFilehandles() {
+
+	current := atomic.LoadInt64(&c.Filehandles)
+	max := atomic.LoadInt64(&c.MaxFilehandles)
+
+	if max == 0 || current < max {
+		return
+	}
+
+	select {
+
+	case <-time.After(100 * time.Millisecond):
+
+		// c.fh.Lock()
+
+		current := atomic.LoadInt64(&c.Filehandles)
+		max := atomic.LoadInt64(&c.MaxFilehandles)
+
+		// c.fh.Unlock()
+
+		if max == 0 || current < max {
+			// c.Logger.Info("max file handles lock removed max: %d current: %d", max, current)
+			break
+		} else {
+			// c.Logger.Info("max file handles in effect max: %d current: %d", max, current)
+		}
+	}
+}
+
 func (c *WOFClone) Status() {
 
 	t2 := time.Since(c.timer)
 
-	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d skipped: %d to retry: %d goroutines: %d filehandles: %d time: %v",
-		c.Scheduled, c.Completed, c.Success, c.Error, c.Skipped, c.retries.Length(), runtime.NumGoroutine(), c.Filehandles, t2)
+	scheduled := atomic.LoadInt64(&c.Scheduled)
+	completed := atomic.LoadInt64(&c.Completed)
+	success := atomic.LoadInt64(&c.Success)
+	error := atomic.LoadInt64(&c.Error)
+	skipped := atomic.LoadInt64(&c.Skipped)
+
+	current_fh := atomic.LoadInt64(&c.Filehandles)
+	max_fh := atomic.LoadInt64(&c.MaxFilehandles)
+
+	c.Logger.Info("scheduled: %d completed: %d success: %d error: %d skipped: %d to retry: %d goroutines: %d filehandles: %d/%d time: %v",
+		scheduled, completed, success, error, skipped, c.retries.Length(), runtime.NumGoroutine(), current_fh, max_fh, t2)
 
 	// https://deferpanic.com/blog/understanding-golang-memory-usage/
 	// https://golang.org/pkg/runtime/#MemStats
