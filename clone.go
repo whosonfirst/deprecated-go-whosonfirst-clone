@@ -84,7 +84,9 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 
 	runtime.GOMAXPROCS(procs)
 
-	count := int((procs * 1000) / 2)
+	count := 1000 // anything more and the operating system's "too many open filehandles"
+	// triggers get hit (20161229/thisisaaronland)
+
 	throttle := make(chan bool, count)
 
 	for i := 0; i < count; i++ {
@@ -110,7 +112,7 @@ func NewWOFClone(source string, dest string, procs int, logger *log.WOFLogger) (
 		Error:          0,
 		Skipped:        0,
 		Filehandles:    0,
-		MaxFilehandles: 1024,
+		MaxFilehandles: 512,
 		Source:         source,
 		Dest:           dest,
 		Logger:         logger,
@@ -231,6 +233,8 @@ func (c *WOFClone) CloneMetaFile(file string, skip_existing bool, force_updates 
 		atomic.AddInt64(&c.Scheduled, 1)
 
 		go func(c *WOFClone, rel_path string, ensure_changes bool) {
+
+			c.EnsureFilehandles()
 
 			defer func() {
 				c.throttle <- true
@@ -384,8 +388,6 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	change := true
 
-	c.EnsureFilehandles()
-
 	// OPEN FH
 
 	atomic.AddInt64(&c.Filehandles, 1)
@@ -472,8 +474,6 @@ func (c *WOFClone) Process(remote string, local string) error {
 
 		// OPEN FH
 
-		c.EnsureFilehandles()
-
 		atomic.AddInt64(&c.Filehandles, 1)
 
 		write_err := ioutil.WriteFile(local, contents, 0644)
@@ -522,8 +522,6 @@ func (c *WOFClone) Fetch(method string, remote string) (*http.Response, error) {
 	req.Close = true
 
 	// OPEN FH
-
-	c.EnsureFilehandles()
 
 	atomic.AddInt64(&c.Filehandles, 1)
 
