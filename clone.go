@@ -1,12 +1,13 @@
 package clone
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	_ "fmt"
-	csv "github.com/whosonfirst/go-whosonfirst-csv"
-	log "github.com/whosonfirst/go-whosonfirst-log"
-	pool "github.com/whosonfirst/go-whosonfirst-pool"
-	utils "github.com/whosonfirst/go-whosonfirst-utils"
+	"github.com/whosonfirst/go-whosonfirst-csv"
+	"github.com/whosonfirst/go-whosonfirst-log"
+	"github.com/whosonfirst/go-whosonfirst-pool"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -392,9 +393,40 @@ func (c *WOFClone) HasChanged(local string, remote string) (bool, error) {
 
 	atomic.AddInt64(&c.Filehandles, 1)
 
-	local_hash, err := utils.HashFile(local)
+	defer func() {
+		atomic.AddInt64(&c.Filehandles, -1)
+	}()
 
-	atomic.AddInt64(&c.Filehandles, -1)
+	// we used to do the following with a helper function in go-whosonfirst-utils
+	// but that package has gotten unweildy and out of control - I am thinking about
+	// a generic WOF "hashing" package but that started turning in to quicksand so
+	// in the interest of just removing go-whosonfirst-utils as a dependency we're
+	// going to do it the old-skool way by hand, for now (20170718/thisisaaronland)
+
+	body, err := ioutil.ReadFile(local)
+
+	if err != nil {
+		return false, err
+	}
+
+	enc := md5.Sum(body)
+	local_hash := hex.EncodeToString(enc[:])
+
+	// see notes above
+
+	/*
+		hash, err := hash.NewMD5Hash()
+
+		if err != nil {
+		   return false, err
+		}
+
+		local_hash, err := hash.HashFile(local)
+
+		if err != nil {
+		   return false, err
+		}
+	*/
 
 	if err != nil {
 		c.Logger.Error("Failed to hash %s, becase %v", local, err)
