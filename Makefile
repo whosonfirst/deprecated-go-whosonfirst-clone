@@ -16,6 +16,7 @@ build:	rmdeps bin
 
 deps:
 	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-csv"
+	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-index"
 	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-log"
 	@GOPATH=$(shell pwd) go get -u "github.com/whosonfirst/go-whosonfirst-pool"
 
